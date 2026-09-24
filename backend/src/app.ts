@@ -5,6 +5,7 @@ import passport from "passport";
 import { env } from "./config/env";
 import { configurePassport } from "./config/passport";
 import { authRouter } from "./routes/auth.routes";
+import { repositoryRouter } from "./routes/repository.routes";
 
 export const app = express();
 
@@ -41,5 +42,8 @@ app.get("/api/health", (_req: Request, res: Response) => {
 
 // Authentication routes
 app.use("/api/auth", authRouter);
+
+// Repository management routes
+app.use("/api", repositoryRouter);
 
 export default app;

@@ -14,6 +14,10 @@ const envSchema = z.object({
   GITHUB_CLIENT_SECRET: z.string().min(1, "GITHUB_CLIENT_SECRET is required"),
   GITHUB_CALLBACK_URL: z.string().url().default("http://localhost:5000/api/auth/github/callback"),
   GITHUB_WEBHOOK_SECRET: z.string().min(1, "GITHUB_WEBHOOK_SECRET is required"),
+  GITHUB_WEBHOOK_URL: z
+    .string()
+    .url()
+    .default("https://example.com/api/webhooks/github"), // Smee URL locally or Render URL in prod
   SLACK_WEBHOOK_URL: z.string().url().optional(),
   GEMINI_API_KEY: z.string().optional(),
 });
@@ -22,7 +26,6 @@ const parsedEnv = envSchema.safeParse(process.env);
 
 if (!parsedEnv.success) {
   console.error("❌ Invalid environment variables:", parsedEnv.error.format());
-  // In development, allow partial startup with warnings if running initial scaffolding
   if (process.env.NODE_ENV === "production") {
     process.exit(1);
   }
