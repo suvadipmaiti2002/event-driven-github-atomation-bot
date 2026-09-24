@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { useRepositories } from "../hooks/useRepositories";
+import { useEvents } from "../hooks/useEvents";
 import {
   LogOut,
   Radio,
@@ -14,6 +15,10 @@ import {
   Plus,
   Loader2,
   ExternalLink,
+  Activity,
+  GitPullRequest,
+  Tag,
+  GitCommit,
 } from "lucide-react";
 
 export function DashboardPage() {
@@ -21,13 +26,20 @@ export function DashboardPage() {
   const {
     availableRepos,
     connectedRepos,
-    isLoading,
+    isLoading: isReposLoading,
     actionLoadingId,
-    error,
+    error: repoError,
     handleConnect,
     handleDisconnect,
     refreshRepos,
   } = useRepositories();
+
+  const {
+    events,
+    isLoadingEvents,
+    eventsError,
+    refreshEvents,
+  } = useEvents(); // Automatically polls every 3 seconds
 
   const [selectedRepoId, setSelectedRepoId] = useState<string>("");
 
@@ -37,6 +49,74 @@ export function DashboardPage() {
       handleConnect(target);
       setSelectedRepoId("");
     }
+  };
+
+  const handleRefreshAll = () => {
+    refreshRepos();
+    refreshEvents();
+  };
+
+  const getEventBadge = (eventType: string) => {
+    switch (eventType) {
+      case "issues":
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            <Tag className="w-3.5 h-3.5" />
+            Issue
+          </span>
+        );
+      case "pull_request":
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-purple-500/10 text-purple-400 border border-purple-500/20">
+            <GitPullRequest className="w-3.5 h-3.5" />
+            PR
+          </span>
+        );
+      case "push":
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20">
+            <GitCommit className="w-3.5 h-3.5" />
+            Push
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+            {eventType}
+          </span>
+        );
+    }
+  };
+
+  // Helper to extract issue/PR title, number, and direct GitHub URL
+  const getEventDetails = (evt: any) => {
+    const p = evt.payload;
+    if (p?.issue) {
+      return {
+        title: p.issue.title,
+        number: `#${p.issue.number}`,
+        url: p.issue.html_url,
+      };
+    }
+    if (p?.pull_request) {
+      return {
+        title: p.pull_request.title,
+        number: `#${p.pull_request.number}`,
+        url: p.pull_request.html_url,
+      };
+    }
+    if (p?.head_commit) {
+      return {
+        title: p.head_commit.message?.split("\n")[0] || "Commit pushed",
+        number: p.head_commit.id?.slice(0, 7) || "",
+        url: p.head_commit.url || p.compare,
+      };
+    }
+    return {
+      title: null,
+      number: null,
+      url: p?.repository?.html_url || null,
+    };
   };
 
   return (
@@ -95,31 +175,31 @@ export function DashboardPage() {
             </div>
 
             <button
-              onClick={refreshRepos}
-              disabled={isLoading}
+              onClick={handleRefreshAll}
+              disabled={isReposLoading || isLoadingEvents}
               className="flex items-center gap-2 self-start sm:self-center px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition border border-slate-700 disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-              Sync Repos
+              <RefreshCw className={`w-3.5 h-3.5 ${isReposLoading || isLoadingEvents ? "animate-spin" : ""}`} />
+              Sync All
             </button>
           </div>
         )}
 
-        {/* Error Banner */}
-        {error && (
+        {/* Errors */}
+        {(repoError || eventsError) && (
           <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-3">
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
-            <span>{error}</span>
+            <span>{repoError || eventsError}</span>
           </div>
         )}
 
-        {/* Section 1: Connected Repositories */}
+        {/* Section 1: Connected Repositories (Scrollable) */}
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-lg font-semibold text-white">Connected Repositories</h2>
               <p className="text-xs text-slate-400">
-                Repositories currently monitored by the automation bot
+                Repositories currently sending real-time webhooks to the bot
               </p>
             </div>
             <span className="px-2.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold">
@@ -127,7 +207,7 @@ export function DashboardPage() {
             </span>
           </div>
 
-          {isLoading ? (
+          {isReposLoading ? (
             <div className="py-8 flex flex-col items-center justify-center text-slate-400">
               <Loader2 className="w-6 h-6 animate-spin text-indigo-400 mb-2" />
               <p className="text-xs">Loading repositories...</p>
@@ -141,7 +221,7 @@ export function DashboardPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
               {connectedRepos.map((repo) => (
                 <div
                   key={repo.id}
@@ -153,17 +233,23 @@ export function DashboardPage() {
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold text-white text-sm">
-                          {repo.repoFullName}
-                        </span>
+                        {/* Direct Clickable Link to GitHub Repository */}
+                        <a
+                          href={`https://github.com/${repo.repoFullName}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-semibold text-white text-sm hover:text-indigo-400 transition inline-flex items-center gap-1.5 group"
+                        >
+                          <span>{repo.repoFullName}</span>
+                          <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400" />
+                        </a>
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                           <CheckCircle2 className="w-3 h-3" />
-                          Active
+                          Active Webhook
                         </span>
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Webhook ID: {repo.webhookId || "Local / Mocked"} • Connected{" "}
-                        {new Date(repo.createdAt).toLocaleDateString()}
+                        Connected {new Date(repo.createdAt).toLocaleDateString()}
                       </p>
                     </div>
                   </div>
@@ -186,7 +272,128 @@ export function DashboardPage() {
           )}
         </div>
 
-        {/* Section 2: Connect a New Repository */}
+        {/* Section 2: Live Activity Stream (Scrollable Container) */}
+        <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <Activity className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-lg font-semibold text-white">Live Activity Stream</h2>
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Live
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Real-time events received from your connected repositories
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={refreshEvents}
+              disabled={isLoadingEvents}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-medium transition border border-slate-700 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingEvents ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          </div>
+
+          {isLoadingEvents && events.length === 0 ? (
+            <div className="py-8 flex flex-col items-center justify-center text-slate-400">
+              <Loader2 className="w-6 h-6 animate-spin text-emerald-400 mb-2" />
+              <p className="text-xs">Loading activity stream...</p>
+            </div>
+          ) : events.length === 0 ? (
+            <div className="text-center py-10 border border-dashed border-slate-800 rounded-xl bg-slate-950/40">
+              <Activity className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+              <p className="text-sm font-medium text-slate-300">No activity yet</p>
+              <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                Open a test issue or pull request on your connected repository to see activity appear here in real-time.
+              </p>
+            </div>
+          ) : (
+            /* Fixed-height scrollable container for event logs */
+            <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+              {events.map((evt) => {
+                const details = getEventDetails(evt);
+                return (
+                  <div
+                    key={evt.id}
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 hover:border-slate-700 transition gap-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5">{getEventBadge(evt.eventType)}</div>
+                      <div>
+                        {/* Repository & Action */}
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          {evt.repoFullName && (
+                            <a
+                              href={`https://github.com/${evt.repoFullName}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-slate-800 text-indigo-300 border border-slate-700 hover:text-indigo-200 transition"
+                            >
+                              <FolderGit2 className="w-3 h-3 text-indigo-400" />
+                              {evt.repoFullName}
+                            </a>
+                          )}
+                          <span className="text-xs font-semibold text-slate-200">
+                            {evt.action ? `${evt.action.toUpperCase()}` : "TRIGGERED"}
+                          </span>
+                          {evt.sender && (
+                            <span className="text-xs text-slate-400">
+                              by <span className="text-indigo-400 font-medium">@{evt.sender}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Clickable Issue/PR Title with Direct Link to GitHub */}
+                        {details.title && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            {details.number && (
+                              <span className="text-xs font-mono text-slate-400 font-semibold">
+                                {details.number}
+                              </span>
+                            )}
+                            {details.url ? (
+                              <a
+                                href={details.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-sm font-medium text-slate-100 hover:text-indigo-400 transition inline-flex items-center gap-1 group"
+                              >
+                                <span>{details.title}</span>
+                                <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 opacity-80" />
+                              </a>
+                            ) : (
+                              <span className="text-sm font-medium text-slate-200">
+                                {details.title}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <span className="text-xs text-slate-400 self-end sm:self-center font-mono">
+                      {new Date(evt.createdAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Section 3: Connect a New Repository */}
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl">
           <h2 className="text-lg font-semibold text-white mb-1">Connect a Repository</h2>
           <p className="text-xs text-slate-400 mb-4">
@@ -197,7 +404,7 @@ export function DashboardPage() {
             <select
               value={selectedRepoId}
               onChange={(e) => setSelectedRepoId(e.target.value)}
-              disabled={isLoading}
+              disabled={isReposLoading}
               className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 transition"
             >
               <option value="">-- Choose a repository from your GitHub account --</option>
@@ -229,7 +436,7 @@ export function DashboardPage() {
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
               Available GitHub Repositories ({availableRepos.length})
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1">
               {availableRepos.map((repo) => (
                 <div
                   key={repo.id}

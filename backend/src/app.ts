@@ -6,6 +6,7 @@ import { env } from "./config/env";
 import { configurePassport } from "./config/passport";
 import { authRouter } from "./routes/auth.routes";
 import { repositoryRouter } from "./routes/repository.routes";
+import { webhookRouter } from "./routes/webhook.routes";
 
 export const app = express();
 
@@ -19,7 +20,7 @@ app.use(
     origin: env.FRONTEND_URL,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-GitHub-Delivery"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-GitHub-Delivery", "X-Hub-Signature-256", "X-GitHub-Event"],
   })
 );
 
@@ -45,5 +46,8 @@ app.use("/api/auth", authRouter);
 
 // Repository management routes
 app.use("/api", repositoryRouter);
+
+// Webhook ingestion and audit event routes
+app.use("/api", webhookRouter);
 
 export default app;
