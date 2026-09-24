@@ -1,6 +1,7 @@
 import { pgTable, uuid, varchar, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { repositories } from "./repositories";
+import { actionLogs } from "./action_logs";
 
 // ---------------------------------------------------------------------------
 // Event Logs Table (Webhook Event Storage + Idempotency)
@@ -42,11 +43,12 @@ export const eventLogs = pgTable(
 );
 
 // EventLog Relations
-export const eventLogsRelations = relations(eventLogs, ({ one }) => ({
+export const eventLogsRelations = relations(eventLogs, ({ one, many }) => ({
   repository: one(repositories, {
     fields: [eventLogs.repositoryId],
     references: [repositories.id],
   }),
+  actionLogs: many(actionLogs),
 }));
 
 // Inferred TypeScript types

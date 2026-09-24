@@ -19,7 +19,10 @@ import {
   GitPullRequest,
   Tag,
   GitCommit,
+  MessageSquare,
+  Bell,
 } from "lucide-react";
+import { ActionExecutionLog } from "../api/events";
 
 export function DashboardPage() {
   const { user, logout } = useAuth();
@@ -88,6 +91,44 @@ export function DashboardPage() {
     }
   };
 
+  const getActionBadge = (action: string | null, payload?: any) => {
+    const isMerged = payload?.pull_request?.merged;
+    const act = isMerged ? "merged" : (action || "triggered").toLowerCase();
+
+    switch (act) {
+      case "opened":
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            OPENED
+          </span>
+        );
+      case "merged":
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-purple-500/15 text-purple-400 border border-purple-500/30">
+            MERGED
+          </span>
+        );
+      case "closed":
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-rose-500/15 text-rose-400 border border-rose-500/30">
+            CLOSED
+          </span>
+        );
+      case "reopened":
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-sky-500/15 text-sky-400 border border-sky-500/30">
+            REOPENED
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
+            {act.toUpperCase()}
+          </span>
+        );
+    }
+  };
+
   // Helper to extract issue/PR title, number, and direct GitHub URL
   const getEventDetails = (evt: any) => {
     const p = evt.payload;
@@ -117,6 +158,57 @@ export function DashboardPage() {
       number: null,
       url: p?.repository?.html_url || null,
     };
+  };
+
+  // Helper to render action execution status badges
+  const renderActionBadges = (actionLogs?: ActionExecutionLog[]) => {
+    if (!actionLogs || actionLogs.length === 0) return null;
+
+    return (
+      <div className="flex flex-wrap items-center gap-1.5 mt-2">
+        <span className="text-[10px] uppercase font-semibold tracking-wider text-slate-500 mr-1">
+          Actions:
+        </span>
+        {actionLogs.map((act) => {
+          const isSuccess = act.status === "SUCCESS";
+          let label = act.actionType;
+          let icon = <Activity className="w-2.5 h-2.5" />;
+
+          if (act.actionType === "github_comment") {
+            label = "Comment";
+            icon = <MessageSquare className="w-2.5 h-2.5" />;
+          } else if (act.actionType === "github_label") {
+            label = "Label";
+            icon = <Tag className="w-2.5 h-2.5" />;
+          } else if (act.actionType === "slack_alert") {
+            label = "Slack";
+            icon = <Bell className="w-2.5 h-2.5" />;
+          }
+
+          return (
+            <span
+              key={act.id}
+              title={
+                isSuccess
+                  ? `${label}: Executed successfully`
+                  : `${label}: Failed - ${act.errorMessage || "Unknown error"}`
+              }
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border transition cursor-default ${
+                isSuccess
+                  ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+                  : "bg-rose-500/10 text-rose-300 border-rose-500/20"
+              }`}
+            >
+              {icon}
+              <span>{label}</span>
+              <span className="font-semibold text-[9px]">
+                {isSuccess ? "✓" : "✗"}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -342,9 +434,7 @@ export function DashboardPage() {
                               {evt.repoFullName}
                             </a>
                           )}
-                          <span className="text-xs font-semibold text-slate-200">
-                            {evt.action ? `${evt.action.toUpperCase()}` : "TRIGGERED"}
-                          </span>
+                          {getActionBadge(evt.action, evt.payload)}
                           {evt.sender && (
                             <span className="text-xs text-slate-400">
                               by <span className="text-indigo-400 font-medium">@{evt.sender}</span>
@@ -377,6 +467,9 @@ export function DashboardPage() {
                             )}
                           </div>
                         )}
+
+                        {/* Automated Action Badges (Comment, Label, Slack) */}
+                        {renderActionBadges(evt.actionLogs)}
                       </div>
                     </div>
 

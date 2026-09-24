@@ -1,18 +1,22 @@
-import { eventLogRepository } from "../repositories/event-log.repository";
+import { eventLogRepository, EventLogWithActions } from "../repositories/event-log.repository";
 import { repositoryRepository } from "../repositories/repository.repository";
+import { actionService } from "./action.service";
 import { EventLog } from "../db/schema";
 
 export interface ProcessWebhookResult {
   isDuplicate: boolean;
-  eventLog: EventLog;
+  isSkipped?: boolean;
+  eventLog?: EventLog;
 }
 
 export class WebhookService {
   /**
    * Processes an incoming GitHub webhook:
-   * 1. Idempotency Check: Verifies deliveryId against event_logs
-   * 2. Finds associated repository in Supabase
-   * 3. Stores metadata and raw payload to guarantee zero data loss
+   * 1. Skips unwanted events (e.g. push) to prevent database log bloat
+   * 2. Idempotency Check: Verifies deliveryId against event_logs
+   * 3. Finds associated repository in Supabase
+   * 4. Stores metadata and raw payload to guarantee zero data loss
+   * 5. Dispatches automated actions (comment, label, Slack) if applicable
    */
   async processWebhook(
     headers: Record<string, any>,
@@ -23,6 +27,24 @@ export class WebhookService {
 
     if (!deliveryId) {
       throw new Error("Missing X-GitHub-Delivery header.");
+    }
+
+    const action = payload.action || null;
+
+    // Filter to primary lifecycle events only: opened, closed, reopened for issues and pull requests
+    const isPrimaryLifecycle =
+      (eventType === "issues" || eventType === "pull_request") &&
+      action !== null &&
+      ["opened", "closed", "reopened"].includes(action);
+
+    if (!isPrimaryLifecycle) {
+      console.log(
+        `[WebhookService] ⏭️ Skipping noise/micro-event [${eventType}] action [${action || "none"}] (delivery: ${deliveryId}).`
+      );
+      return {
+        isDuplicate: false,
+        isSkipped: true,
+      };
     }
 
     // 1. Idempotency Check: Check if this delivery was already processed
@@ -51,7 +73,6 @@ export class WebhookService {
     }
 
     // 3. Extract event metadata
-    const action = payload.action || null;
     const sender = payload.sender?.login || null;
 
     // 4. Persist to Supabase (Resilience: stores raw JSON payload + repo full name)
@@ -69,6 +90,16 @@ export class WebhookService {
       `[WebhookService] ✅ Event recorded for [${repoFullName || "unknown repo"}]: [${eventType}] action: [${action || "none"}] delivery: [${deliveryId}]`
     );
 
+    // 5. Trigger automated outbound actions (GitHub comment, label, Slack)
+    try {
+      await actionService.handleEvent(eventLog);
+    } catch (actionErr: any) {
+      console.error(
+        `[WebhookService] ⚠️ Action execution encountered error:`,
+        actionErr?.message || actionErr
+      );
+    }
+
     return {
       isDuplicate: false,
       eventLog,
@@ -76,9 +107,9 @@ export class WebhookService {
   }
 
   /**
-   * Retrieve recent event logs for the dashboard
+   * Retrieve recent event logs with their associated action execution logs
    */
-  async getRecentEvents(limit: number = 50): Promise<EventLog[]> {
+  async getRecentEvents(limit: number = 50): Promise<EventLogWithActions[]> {
     return eventLogRepository.getRecentEvents(limit);
   }
 }

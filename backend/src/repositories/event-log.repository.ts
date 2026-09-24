@@ -1,6 +1,10 @@
 import { eq, desc } from "drizzle-orm";
 import { db } from "../db";
-import { eventLogs, EventLog, NewEventLog } from "../db/schema";
+import { eventLogs, EventLog, NewEventLog, ActionLog } from "../db/schema";
+
+export type EventLogWithActions = EventLog & {
+  actionLogs: ActionLog[];
+};
 
 export class EventLogRepository {
   /**
@@ -30,14 +34,18 @@ export class EventLogRepository {
   }
 
   /**
-   * Fetch the most recent event logs across connected repos.
+   * Fetch the most recent event logs across connected repos with associated action execution logs.
    */
-  async getRecentEvents(limit: number = 50): Promise<EventLog[]> {
-    return db
-      .select()
-      .from(eventLogs)
-      .orderBy(desc(eventLogs.createdAt))
-      .limit(limit);
+  async getRecentEvents(limit: number = 50): Promise<EventLogWithActions[]> {
+    return db.query.eventLogs.findMany({
+      orderBy: [desc(eventLogs.createdAt)],
+      limit,
+      with: {
+        actionLogs: {
+          orderBy: (actionLogs, { desc }) => [desc(actionLogs.createdAt)],
+        },
+      },
+    }) as Promise<EventLogWithActions[]>;
   }
 
   /**

@@ -70,7 +70,7 @@ export class GitHubClient {
           content_type: "json",
           secret: params.secret,
         },
-        events: ["issues", "pull_request", "push"],
+        events: ["issues", "pull_request"],
         active: true,
       });
 
@@ -106,6 +106,106 @@ export class GitHubClient {
       // If webhook was already removed on GitHub, ignore 404
       if (error?.status !== 404) {
         console.warn(`[GitHubClient] Error deleting webhook ${params.webhookId}:`, error?.message);
+      }
+    }
+  }
+
+  /**
+   * Posts an automated comment on an issue or pull request
+   */
+  async createComment(params: {
+    accessToken: string;
+    owner: string;
+    repo: string;
+    issueNumber: number;
+    body: string;
+  }): Promise<{ success: boolean; commentId?: number; htmlUrl?: string; error?: string }> {
+    const octokit = new Octokit({ auth: params.accessToken });
+
+    try {
+      const response = await octokit.rest.issues.createComment({
+        owner: params.owner,
+        repo: params.repo,
+        issue_number: params.issueNumber,
+        body: params.body,
+      });
+
+      return {
+        success: true,
+        commentId: response.data.id,
+        htmlUrl: response.data.html_url,
+      };
+    } catch (error: any) {
+      console.error(
+        `[GitHubClient] Failed to post comment on ${params.owner}/${params.repo}#${params.issueNumber}:`,
+        error?.message || error
+      );
+      return {
+        success: false,
+        error: error?.message || "Failed to post comment on GitHub",
+      };
+    }
+  }
+
+  /**
+   * Adds one or more labels to an issue or pull request
+   */
+  async addLabels(params: {
+    accessToken: string;
+    owner: string;
+    repo: string;
+    issueNumber: number;
+    labels: string[];
+  }): Promise<{ success: boolean; labelsAdded?: string[]; error?: string }> {
+    const octokit = new Octokit({ auth: params.accessToken });
+
+    try {
+      const response = await octokit.rest.issues.addLabels({
+        owner: params.owner,
+        repo: params.repo,
+        issue_number: params.issueNumber,
+        labels: params.labels,
+      });
+
+      return {
+        success: true,
+        labelsAdded: response.data.map((l: any) => l.name),
+      };
+    } catch (error: any) {
+      console.error(
+        `[GitHubClient] Failed to add labels to ${params.owner}/${params.repo}#${params.issueNumber}:`,
+        error?.message || error
+      );
+      return {
+        success: false,
+        error: error?.message || "Failed to add labels on GitHub",
+      };
+    }
+  }
+
+  /**
+   * Removes a specific label from an issue or pull request (gracefully ignores 404 if label not present)
+   */
+  async removeLabel(params: {
+    accessToken: string;
+    owner: string;
+    repo: string;
+    issueNumber: number;
+    name: string;
+  }): Promise<void> {
+    const octokit = new Octokit({ auth: params.accessToken });
+
+    try {
+      await octokit.rest.issues.removeLabel({
+        owner: params.owner,
+        repo: params.repo,
+        issue_number: params.issueNumber,
+        name: params.name,
+      });
+    } catch (err: any) {
+      // If label does not exist on the issue, 404 is normal and expected
+      if (err?.status !== 404) {
+        console.warn(`[GitHubClient] Could not remove label '${params.name}':`, err?.message || err);
       }
     }
   }

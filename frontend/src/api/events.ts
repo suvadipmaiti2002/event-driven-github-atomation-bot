@@ -1,5 +1,15 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
+export interface ActionExecutionLog {
+  id: string;
+  eventLogId: string;
+  actionType: "github_comment" | "github_label" | "slack_alert" | string;
+  status: "PENDING" | "SUCCESS" | "FAILED";
+  details: any;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
 export interface WebhookEventLog {
   id: string;
   deliveryId: string;
@@ -10,6 +20,7 @@ export interface WebhookEventLog {
   sender: string | null;
   payload: any;
   createdAt: string;
+  actionLogs?: ActionExecutionLog[];
 }
 
 /**

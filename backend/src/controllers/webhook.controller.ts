@@ -16,11 +16,19 @@ export class WebhookController {
     try {
       const result = await webhookService.processWebhook(req.headers, req.body);
 
+      if (result.isSkipped) {
+        res.status(200).json({
+          success: true,
+          message: "Event skipped by policy (not tracked in database).",
+        });
+        return;
+      }
+
       if (result.isDuplicate) {
         res.status(200).json({
           success: true,
           message: "Duplicate webhook delivery ignored (Idempotency active).",
-          deliveryId: result.eventLog.deliveryId,
+          deliveryId: result.eventLog?.deliveryId,
         });
         return;
       }
@@ -29,12 +37,12 @@ export class WebhookController {
         success: true,
         message: "Webhook event successfully processed and recorded.",
         data: {
-          id: result.eventLog.id,
-          deliveryId: result.eventLog.deliveryId,
-          eventType: result.eventLog.eventType,
-          action: result.eventLog.action,
-          sender: result.eventLog.sender,
-          createdAt: result.eventLog.createdAt,
+          id: result.eventLog!.id,
+          deliveryId: result.eventLog!.deliveryId,
+          eventType: result.eventLog!.eventType,
+          action: result.eventLog!.action,
+          sender: result.eventLog!.sender,
+          createdAt: result.eventLog!.createdAt,
         },
       });
     } catch (error) {
