@@ -1,5 +1,6 @@
-import { EventLog, Rule } from "../db/schema";
+import { EventLog, ActionLog, Rule } from "../db/schema";
 import { actionLogRepository } from "../repositories/action-log.repository";
+import { eventLogRepository } from "../repositories/event-log.repository";
 import { repositoryRepository } from "../repositories/repository.repository";
 import { userRepository } from "../repositories/user.repository";
 import { ruleService } from "./rule.service";
@@ -390,6 +391,161 @@ export class ActionService {
         });
       }
     }
+  }
+
+  /**
+   * Re-executes a failed action for observability dead-letter recovery.
+   * Re-constructs original webhook context from PostgreSQL and updates the action audit log.
+   */
+  async retryAction(actionLogId: string): Promise<{
+    success: boolean;
+    actionLog: ActionLog;
+    error?: string;
+  }> {
+    const action = await actionLogRepository.findById(actionLogId);
+    if (!action) {
+      throw new Error(`Action log ${actionLogId} not found.`);
+    }
+
+    const eventLog = await eventLogRepository.findById(action.eventLogId);
+    if (!eventLog) {
+      throw new Error(`Parent event log ${action.eventLogId} not found.`);
+    }
+
+    const { eventType, action: evtAction, repoFullName, payload } = eventLog;
+    const issueOrPr = (payload as any)?.issue || (payload as any)?.pull_request;
+    const issueNumber: number | undefined = issueOrPr?.number;
+    const title: string = issueOrPr?.title || "Untitled";
+    const htmlUrl: string = issueOrPr?.html_url || `https://github.com/${repoFullName}`;
+    const bodySnippet: string = issueOrPr?.body || "";
+    const sender = eventLog.sender || "collaborator";
+    const isPR = eventType === "pull_request";
+    const isMerged = isPR && Boolean((payload as any)?.pull_request?.merged);
+    const [owner, repo] = (repoFullName || "").split("/");
+
+    let accessToken: string | null = null;
+    if (eventLog.repositoryId) {
+      const dbRepo = await repositoryRepository.findById(eventLog.repositoryId);
+      if (dbRepo?.userId) {
+        const user = await userRepository.findById(dbRepo.userId);
+        if (user?.accessToken) {
+          accessToken = user.accessToken;
+        }
+      }
+    }
+
+    let retrySuccess = false;
+    let retryDetails: any = action.details;
+    let retryError: string | null = null;
+
+    log.info({ actionLogId, actionType: action.actionType, repo: repoFullName }, "Executing manual action retry");
+
+    try {
+      if (action.actionType === "slack_alert") {
+        // Fetch AI triage details if previously generated
+        const siblingActions = await actionLogRepository.findByEventLogId(eventLog.id);
+        const aiAction = siblingActions.find((a) => a.actionType === "ai_triage" && a.status === "SUCCESS");
+        const aiTriage = aiAction?.details as AITriageResult | undefined;
+
+        const slackResult = await slackClient.sendNotification({
+          title,
+          repoFullName: repoFullName || "unknown",
+          eventType: eventType as "issues" | "pull_request",
+          action: evtAction || "opened",
+          sender,
+          htmlUrl,
+          bodySnippet,
+          isMerged,
+          issueNumber,
+          aiTriage,
+        });
+
+        retrySuccess = slackResult.success;
+        retryError = slackResult.error || null;
+      } else if (action.actionType === "ai_triage") {
+        const aiResult = await geminiClient.triageContent({
+          title,
+          bodySnippet,
+          eventType: eventType as "issues" | "pull_request",
+          repoFullName: repoFullName || "unknown",
+        });
+
+        retrySuccess = aiResult.success;
+        if (aiResult.success && aiResult.data) {
+          retryDetails = aiResult.data;
+        } else {
+          retryError = aiResult.error || "AI triage retry failed";
+        }
+      } else if (action.actionType === "github_comment") {
+        if (!accessToken || !issueNumber || !owner || !repo) {
+          throw new Error("Missing GitHub credentials or issue metadata for comment retry");
+        }
+
+        const commentBody = isPR
+          ? `👋 Hi @${sender}!\n\nThank you for opening this pull request. (Retried notification)`
+          : `👋 Hi @${sender}!\n\nThank you for reporting this issue. (Retried notification)`;
+
+        const commentResult = await githubClient.createComment({
+          accessToken,
+          owner,
+          repo,
+          issueNumber,
+          body: commentBody,
+        });
+
+        retrySuccess = commentResult.success;
+        retryError = commentResult.error || null;
+        if (commentResult.success) {
+          retryDetails = { issueNumber, commentId: commentResult.commentId, htmlUrl: commentResult.htmlUrl };
+        }
+      } else if (action.actionType === "github_label") {
+        if (!accessToken || !issueNumber || !owner || !repo) {
+          throw new Error("Missing GitHub credentials or issue metadata for label retry");
+        }
+
+        const labelResult = await githubClient.addLabels({
+          accessToken,
+          owner,
+          repo,
+          issueNumber,
+          labels: ["triage"],
+        });
+
+        retrySuccess = labelResult.success;
+        retryError = labelResult.error || null;
+        if (labelResult.success) {
+          retryDetails = { labels: labelResult.labelsAdded };
+        }
+      } else {
+        throw new Error(`Unsupported action type for retry: ${action.actionType}`);
+      }
+    } catch (err: any) {
+      retrySuccess = false;
+      retryError = err?.message || String(err);
+    }
+
+    const updated = await actionLogRepository.updateActionLog(action.id, {
+      status: retrySuccess ? "SUCCESS" : "FAILED",
+      details: retryDetails,
+      errorMessage: retryError,
+      retryCount: action.retryCount + 1,
+    });
+
+    log.info(
+      {
+        actionLogId: action.id,
+        actionType: action.actionType,
+        status: updated?.status,
+        retryCount: updated?.retryCount,
+      },
+      `Completed retry for action ${action.actionType}`
+    );
+
+    return {
+      success: retrySuccess,
+      actionLog: updated!,
+      error: retryError || undefined,
+    };
   }
 }
 

@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, timestamp, jsonb, integer, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { eventLogs } from "./event_logs";
 
@@ -26,6 +26,9 @@ export const actionLogs = pgTable(
 
     // Recorded error message if status is FAILED (observability standard)
     errorMessage: text("error_message"),
+
+    // Number of manual or automated retries executed for this action
+    retryCount: integer("retry_count").default(0).notNull(),
 
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },

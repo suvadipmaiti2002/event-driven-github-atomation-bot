@@ -22,6 +22,19 @@ export class EventLogRepository {
   }
 
   /**
+   * Find an event by its primary key ID.
+   */
+  async findById(id: string): Promise<EventLog | null> {
+    const results = await db
+      .select()
+      .from(eventLogs)
+      .where(eq(eventLogs.id, id))
+      .limit(1);
+
+    return results[0] || null;
+  }
+
+  /**
    * Insert a new event log into Supabase.
    */
   async createEventLog(data: NewEventLog): Promise<EventLog> {

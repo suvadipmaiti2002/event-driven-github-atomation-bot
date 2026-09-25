@@ -7,6 +7,7 @@ export interface ActionExecutionLog {
   status: "PENDING" | "SUCCESS" | "FAILED";
   details: any;
   errorMessage: string | null;
+  retryCount?: number;
   createdAt: string;
 }
 
@@ -41,5 +42,29 @@ export async function fetchEventLogs(): Promise<WebhookEventLog[]> {
   }
 
   const result = await response.json();
+  return result.data;
+}
+
+/**
+ * Retry a failed action execution (Dead-letter recovery)
+ */
+export async function retryActionLog(actionLogId: string): Promise<ActionExecutionLog> {
+  const token = localStorage.getItem("token");
+
+  const response = await fetch(`${API_URL}/api/actions/${actionLogId}/retry`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: "include",
+    signal: AbortSignal.timeout(30000), // 30 seconds max
+  });
+
+  const result = await response.json();
+  if (!response.ok || !result.success) {
+    throw new Error(result.error || "Failed to retry action.");
+  }
+
   return result.data;
 }

@@ -23,8 +23,10 @@ import {
   Bell,
   Sparkles,
   ChevronDown,
+  RotateCw,
+  X,
 } from "lucide-react";
-import { ActionExecutionLog } from "../api/events";
+import { ActionExecutionLog, retryActionLog } from "../api/events";
 import { RulesManager } from "../components/RulesManager";
 
 export function DashboardPage() {
@@ -50,16 +52,79 @@ export function DashboardPage() {
 
   const [selectedRepoId, setSelectedRepoId] = useState<string>("");
   const [selectedEventsRepo, setSelectedEventsRepo] = useState<string>("all");
+  const [retryingActionId, setRetryingActionId] = useState<string | null>(null);
+  const [showOnlyFailures, setShowOnlyFailures] = useState<boolean>(false);
+  const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
+
+  // Auto-dismiss toast notification after 5 seconds
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
 
   const activeRulesRepo =
     connectedRepos.find((r) => r.id === selectedRulesRepoId) || connectedRepos[0] || null;
 
   const eventRepoOptions = connectedRepos.map((r) => r.repoFullName);
 
+  const failedEventsCount = events.filter((evt) =>
+    evt.actionLogs?.some((a) => a.status === "FAILED")
+  ).length;
+
   const filteredEvents = events.filter((evt) => {
-    if (selectedEventsRepo === "all") return true;
-    return evt.repositoryId === selectedEventsRepo || evt.repoFullName === selectedEventsRepo;
+    if (selectedEventsRepo !== "all") {
+      const matchRepo = evt.repositoryId === selectedEventsRepo || evt.repoFullName === selectedEventsRepo;
+      if (!matchRepo) return false;
+    }
+    if (showOnlyFailures) {
+      return evt.actionLogs?.some((a) => a.status === "FAILED");
+    }
+    return true;
   });
+
+  const formatErrorMessage = (raw: string): string => {
+    if (!raw) return "An unexpected error occurred.";
+    if (raw.includes("503") || raw.includes("high demand") || raw.includes("UNAVAILABLE")) {
+      return "Gemini AI is temporarily busy with high demand. Please try again in a few moments.";
+    }
+    if (raw.includes("RESOURCE_EXHAUSTED") || raw.includes("quota")) {
+      return "Gemini API rate limit reached. Please wait a moment before retrying.";
+    }
+    try {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed?.error?.message) return parsed.error.message;
+        if (parsed?.message) return parsed.message;
+      }
+    } catch {
+      // Ignore JSON parse errors
+    }
+    return raw.replace(/^Error:\s*/, "");
+  };
+
+  const handleRetryAction = async (actionLogId: string) => {
+    try {
+      setRetryingActionId(actionLogId);
+      await retryActionLog(actionLogId);
+      await refreshEvents();
+      setToast({
+        type: "success",
+        message: "Action retried successfully!",
+      });
+    } catch (err: any) {
+      await refreshEvents();
+      const friendlyMsg = formatErrorMessage(err?.message || "Failed to retry action.");
+      setToast({
+        type: "error",
+        message: friendlyMsg,
+      });
+    } finally {
+      setRetryingActionId(null);
+    }
+  };
 
   // If the currently filtered repo was disconnected, revert back to "all"
   useEffect(() => {
@@ -216,22 +281,44 @@ export function DashboardPage() {
               : "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
             : "bg-rose-500/10 text-rose-300 border-rose-500/20";
 
+          const isRetrying = retryingActionId === act.id;
+          const retryCount = act.retryCount || 0;
+
           return (
-            <span
-              key={act.id}
-              title={
-                isSuccess
-                  ? `${label}: Executed successfully`
-                  : `${label}: Failed - ${act.errorMessage || "Unknown error"}`
-              }
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border transition cursor-default ${badgeClasses}`}
-            >
-              {icon}
-              <span>{label}</span>
-              <span className="font-semibold text-[9px]">
-                {isSuccess ? "✓" : "✗"}
+            <div key={act.id} className="inline-flex items-center gap-1">
+              <span
+                title={
+                  isSuccess
+                    ? `${label}: Executed successfully${retryCount > 0 ? ` (after ${retryCount} retry)` : ""}`
+                    : `${label}: Failed - ${act.errorMessage || "Unknown error"}`
+                }
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border transition cursor-default ${badgeClasses}`}
+              >
+                {icon}
+                <span>{label}</span>
+                <span className="font-semibold text-[9px]">
+                  {isSuccess ? "✓" : "✗"}
+                </span>
+                {retryCount > 0 && (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-slate-800/80 text-indigo-300 font-mono">
+                    {retryCount}r
+                  </span>
+                )}
               </span>
-            </span>
+
+              {/* Inline Retry Button for Failed Actions */}
+              {!isSuccess && (
+                <button
+                  onClick={() => handleRetryAction(act.id)}
+                  disabled={isRetrying}
+                  title={`Retry ${label}`}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 transition disabled:opacity-50"
+                >
+                  <RotateCw className={`w-2.5 h-2.5 ${isRetrying ? "animate-spin" : ""}`} />
+                  <span>{isRetrying ? "Retrying..." : "Retry"}</span>
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
@@ -443,6 +530,20 @@ export function DashboardPage() {
                 <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>
 
+              {/* Failures Only Filter Button */}
+              <button
+                onClick={() => setShowOnlyFailures(!showOnlyFailures)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition border ${
+                  showOnlyFailures
+                    ? "bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-sm"
+                    : "bg-slate-950 text-slate-400 hover:text-slate-200 border-slate-700"
+                }`}
+                title="Filter events that have failed actions needing retry"
+              >
+                <AlertCircle className={`w-3.5 h-3.5 ${showOnlyFailures ? "text-rose-400" : "text-slate-500"}`} />
+                <span>Failures {failedEventsCount > 0 ? `(${failedEventsCount})` : ""}</span>
+              </button>
+
               <button
                 onClick={refreshEvents}
                 disabled={isLoadingEvents}
@@ -470,9 +571,13 @@ export function DashboardPage() {
           ) : filteredEvents.length === 0 ? (
             <div className="text-center py-10 border border-dashed border-slate-800 rounded-xl bg-slate-950/40">
               <Activity className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-              <p className="text-sm font-medium text-slate-300">No events for this repository</p>
+              <p className="text-sm font-medium text-slate-300">
+                {showOnlyFailures ? "No failed actions found" : "No events for this repository"}
+              </p>
               <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                No activity recorded yet for {selectedEventsRepo}. Try selecting "All Repositories" or trigger an event in that repo.
+                {showOnlyFailures
+                  ? "All actions have executed successfully without failures."
+                  : `No activity recorded yet for ${selectedEventsRepo}. Try selecting "All Repositories" or trigger an event in that repo.`}
               </p>
             </div>
           ) : (
@@ -683,6 +788,37 @@ export function DashboardPage() {
       <footer className="border-t border-slate-900 py-4 px-6 text-center text-xs text-slate-600">
         Event-Driven GitHub Automation Bot
       </footer>
+
+      {/* Floating Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div
+            className={`flex items-start gap-3 p-3.5 rounded-xl border shadow-2xl backdrop-blur-md ${
+              toast.type === "success"
+                ? "bg-emerald-950/95 border-emerald-500/40 text-emerald-200"
+                : "bg-rose-950/95 border-rose-500/40 text-rose-200"
+            }`}
+          >
+            {toast.type === "success" ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+            )}
+            <div className="flex-1 text-xs leading-relaxed">
+              <p className="font-semibold mb-0.5">
+                {toast.type === "success" ? "Success" : "Retry Status"}
+              </p>
+              <p className="opacity-90">{toast.message}</p>
+            </div>
+            <button
+              onClick={() => setToast(null)}
+              className="text-slate-400 hover:text-white transition p-0.5"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

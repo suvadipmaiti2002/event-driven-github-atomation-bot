@@ -1,6 +1,7 @@
 import { env } from "../../config/env";
 import { AITriageResult } from "../ai/gemini.client";
 import { createChildLogger } from "../../utils/logger";
+import { withRetry } from "../../utils/retry";
 
 const log = createChildLogger("SlackClient");
 
@@ -151,19 +152,31 @@ export class SlackClient {
     ];
 
     try {
-      const response = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          attachments: [
-            {
-              fallback: fallbackText,
-              color: accentColor,
-              blocks,
-            },
-          ],
-        }),
-      });
+      const response = await withRetry(
+        async () => {
+          const res = await fetch(webhookUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              attachments: [
+                {
+                  fallback: fallbackText,
+                  color: accentColor,
+                  blocks,
+                },
+              ],
+            }),
+            signal: AbortSignal.timeout(30000),
+          });
+
+          // Transient server errors (500, 502, 503, 504) should trigger a retry
+          if (res.status >= 500) {
+            throw new Error(`Slack API transient HTTP ${res.status}`);
+          }
+          return res;
+        },
+        { maxRetries: 2, delayMs: 800, label: "Slack Webhook" }
+      );
 
       if (!response.ok) {
         const errorText = await response.text();

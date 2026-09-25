@@ -9,12 +9,12 @@ export function httpLogger(req: Request, res: Response, next: NextFunction) {
     const isError = res.statusCode >= 400;
 
     // Never skip any error or failure (4xx, 5xx) - even if on background endpoints!
-    // Only silence healthy, successful (200/304) routine 3-second dashboard pings
+    const targetUrl = req.originalUrl || req.url || "";
     const isRoutineSuccess =
       !isError &&
       (req.method === "OPTIONS" ||
-        req.url === "/api/health" ||
-        req.url.startsWith("/api/events"));
+        targetUrl.includes("/health") ||
+        targetUrl.includes("/events"));
 
     if (isRoutineSuccess) {
       return;

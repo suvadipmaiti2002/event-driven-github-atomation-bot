@@ -16,9 +16,13 @@ process.on("uncaughtException", (error: Error) => {
   process.exit(1);
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(
     { port: PORT, frontendOrigin: env.FRONTEND_URL, nodeEnv: env.NODE_ENV },
     `🚀 Backend server listening on port ${PORT}`
   );
 });
+
+// Enforce 30-second maximum request timeout
+server.setTimeout(30000);
+

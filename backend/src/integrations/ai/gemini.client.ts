@@ -76,7 +76,9 @@ Respond ONLY with a valid raw JSON object (no introductory phrases like "Here is
     for (const modelName of candidateModels) {
       try {
         log.info({ modelName, repo: params.repoFullName }, `Attempting AI triage`);
-        const response = await client.models.generateContent({
+        
+        const timeoutMs = 30000; // 30 seconds max timeout per candidate
+        const generatePromise = client.models.generateContent({
           model: modelName,
           contents: prompt,
           config: {
@@ -122,6 +124,15 @@ Respond ONLY with a valid raw JSON object (no introductory phrases like "Here is
           },
         });
 
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`Timeout: Gemini model ${modelName} took longer than ${timeoutMs / 1000}s`)),
+            timeoutMs
+          )
+        );
+
+        const response: any = await Promise.race([generatePromise, timeoutPromise]);
+
         if (response.text) {
           rawText = response.text;
           log.info({ modelName, repo: params.repoFullName }, `Successfully triaged using model ${modelName}`);
@@ -130,6 +141,7 @@ Respond ONLY with a valid raw JSON object (no introductory phrases like "Here is
       } catch (err: any) {
         lastError = err;
         const shouldFallback =
+          err?.message?.includes("Timeout") ||
           err?.status === 503 ||
           err?.status === 404 ||
           err?.status === 429 ||

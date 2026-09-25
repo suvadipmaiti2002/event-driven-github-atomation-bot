@@ -1,4 +1,8 @@
 import { Octokit } from "@octokit/rest";
+import { createChildLogger } from "../../utils/logger";
+import { withRetry } from "../../utils/retry";
+
+const log = createChildLogger("GitHubClient");
 
 export interface GitHubRepositoryDTO {
   id: string;
@@ -11,11 +15,20 @@ export interface GitHubRepositoryDTO {
 }
 
 export class GitHubClient {
+  private getOctokit(accessToken: string): Octokit {
+    return new Octokit({
+      auth: accessToken,
+      request: {
+        timeout: 30000, // 30 seconds max timeout
+      },
+    });
+  }
+
   /**
    * Fetches the repositories that the authenticated user owns or has admin access to
    */
   async getUserRepositories(accessToken: string): Promise<GitHubRepositoryDTO[]> {
-    const octokit = new Octokit({ auth: accessToken });
+    const octokit = this.getOctokit(accessToken);
 
     const response = await octokit.rest.repos.listForAuthenticatedUser({
       sort: "updated",
@@ -44,7 +57,7 @@ export class GitHubClient {
     webhookUrl: string;
     secret: string;
   }): Promise<string | null> {
-    const octokit = new Octokit({ auth: params.accessToken });
+    const octokit = this.getOctokit(params.accessToken);
 
     try {
       // 1. Check if our webhook is already installed on this repository
@@ -94,7 +107,7 @@ export class GitHubClient {
     repo: string;
     webhookId: string;
   }): Promise<void> {
-    const octokit = new Octokit({ auth: params.accessToken });
+    const octokit = this.getOctokit(params.accessToken);
 
     try {
       await octokit.rest.repos.deleteWebhook({
@@ -120,15 +133,19 @@ export class GitHubClient {
     issueNumber: number;
     body: string;
   }): Promise<{ success: boolean; commentId?: number; htmlUrl?: string; error?: string }> {
-    const octokit = new Octokit({ auth: params.accessToken });
+    const octokit = this.getOctokit(params.accessToken);
 
     try {
-      const response = await octokit.rest.issues.createComment({
-        owner: params.owner,
-        repo: params.repo,
-        issue_number: params.issueNumber,
-        body: params.body,
-      });
+      const response = await withRetry(
+        () =>
+          octokit.rest.issues.createComment({
+            owner: params.owner,
+            repo: params.repo,
+            issue_number: params.issueNumber,
+            body: params.body,
+          }),
+        { maxRetries: 2, delayMs: 800, label: `Comment on ${params.owner}/${params.repo}#${params.issueNumber}` }
+      );
 
       return {
         success: true,
@@ -136,9 +153,9 @@ export class GitHubClient {
         htmlUrl: response.data.html_url,
       };
     } catch (error: any) {
-      console.error(
-        `[GitHubClient] Failed to post comment on ${params.owner}/${params.repo}#${params.issueNumber}:`,
-        error?.message || error
+      log.error(
+        { err: error, repo: `${params.owner}/${params.repo}`, issueNumber: params.issueNumber },
+        `Failed to post comment on GitHub`
       );
       return {
         success: false,
@@ -157,24 +174,28 @@ export class GitHubClient {
     issueNumber: number;
     labels: string[];
   }): Promise<{ success: boolean; labelsAdded?: string[]; error?: string }> {
-    const octokit = new Octokit({ auth: params.accessToken });
+    const octokit = this.getOctokit(params.accessToken);
 
     try {
-      const response = await octokit.rest.issues.addLabels({
-        owner: params.owner,
-        repo: params.repo,
-        issue_number: params.issueNumber,
-        labels: params.labels,
-      });
+      const response = await withRetry(
+        () =>
+          octokit.rest.issues.addLabels({
+            owner: params.owner,
+            repo: params.repo,
+            issue_number: params.issueNumber,
+            labels: params.labels,
+          }),
+        { maxRetries: 2, delayMs: 800, label: `AddLabels on ${params.owner}/${params.repo}#${params.issueNumber}` }
+      );
 
       return {
         success: true,
         labelsAdded: response.data.map((l: any) => l.name),
       };
     } catch (error: any) {
-      console.error(
-        `[GitHubClient] Failed to add labels to ${params.owner}/${params.repo}#${params.issueNumber}:`,
-        error?.message || error
+      log.error(
+        { err: error, repo: `${params.owner}/${params.repo}`, issueNumber: params.issueNumber },
+        `Failed to add labels on GitHub`
       );
       return {
         success: false,
@@ -193,7 +214,7 @@ export class GitHubClient {
     issueNumber: number;
     name: string;
   }): Promise<void> {
-    const octokit = new Octokit({ auth: params.accessToken });
+    const octokit = this.getOctokit(params.accessToken);
 
     try {
       await octokit.rest.issues.removeLabel({

@@ -18,3 +18,10 @@ webhookRouter.get(
   authenticate,
   webhookController.getEvents
 );
+
+// 3. Retry a failed action execution (Protected, observability retry)
+webhookRouter.post(
+  "/actions/:id/retry",
+  authenticate,
+  webhookController.retryAction
+);

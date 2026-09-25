@@ -1,5 +1,6 @@
 import { Response, NextFunction } from "express";
 import { webhookService } from "../services/webhook.service";
+import { actionService } from "../services/action.service";
 import { RequestWithRawBody } from "../middleware/hmac.middleware";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
 
@@ -65,6 +66,37 @@ export class WebhookController {
       res.status(200).json({
         success: true,
         data: events,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/actions/:id/retry
+   * Re-executes a failed action for observability recovery
+   */
+  async retryAction(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const actionLogId = req.params.id;
+      if (!actionLogId) {
+        res.status(400).json({
+          success: false,
+          error: { code: "BAD_REQUEST", message: "Action log ID is required." },
+        });
+        return;
+      }
+
+      const result = await actionService.retryAction(actionLogId);
+
+      res.status(200).json({
+        success: result.success,
+        data: result.actionLog,
+        error: result.error,
       });
     } catch (error) {
       next(error);
