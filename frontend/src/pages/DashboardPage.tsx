@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { useRepositories } from "../hooks/useRepositories";
 import { useEvents } from "../hooks/useEvents";
@@ -24,9 +24,11 @@ import {
   Sparkles,
 } from "lucide-react";
 import { ActionExecutionLog } from "../api/events";
+import { RulesManager } from "../components/RulesManager";
 
 export function DashboardPage() {
   const { user, logout } = useAuth();
+  const [selectedRulesRepoId, setSelectedRulesRepoId] = useState<string | null>(null);
   const {
     availableRepos,
     connectedRepos,
@@ -46,6 +48,9 @@ export function DashboardPage() {
   } = useEvents(); // Automatically polls every 3 seconds
 
   const [selectedRepoId, setSelectedRepoId] = useState<string>("");
+
+  const activeRulesRepo =
+    connectedRepos.find((r) => r.id === selectedRulesRepoId) || connectedRepos[0] || null;
 
   const handleSelectAndConnect = () => {
     const target = availableRepos.find((r) => r.id === selectedRepoId);
@@ -369,6 +374,16 @@ export function DashboardPage() {
             </div>
           )}
         </div>
+
+        {/* Section: Automation Rules (Configurable Rules Engine) */}
+        {connectedRepos.length > 0 && activeRulesRepo && (
+          <RulesManager
+            repositoryId={activeRulesRepo.id}
+            repoFullName={activeRulesRepo.repoFullName}
+            connectedRepos={connectedRepos}
+            onSelectRepo={setSelectedRulesRepoId}
+          />
+        )}
 
         {/* Section 2: Live Activity Stream (Scrollable Container) */}
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl">

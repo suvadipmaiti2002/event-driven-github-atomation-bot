@@ -7,6 +7,7 @@ import { configurePassport } from "./config/passport";
 import { authRouter } from "./routes/auth.routes";
 import { repositoryRouter } from "./routes/repository.routes";
 import { webhookRouter } from "./routes/webhook.routes";
+import { ruleRouter } from "./routes/rule.routes";
 
 export const app = express();
 
@@ -49,6 +50,9 @@ app.use("/api", repositoryRouter);
 
 // Webhook ingestion and audit event routes
 app.use("/api", webhookRouter);
+
+// Configurable automation rules routes
+app.use("/api", ruleRouter);
 
 // Global centralized error handling middleware
 app.use((err: any, _req: Request, res: Response, _next: express.NextFunction) => {

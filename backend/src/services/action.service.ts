@@ -1,7 +1,8 @@
-import { EventLog } from "../db/schema";
+import { EventLog, Rule } from "../db/schema";
 import { actionLogRepository } from "../repositories/action-log.repository";
 import { repositoryRepository } from "../repositories/repository.repository";
 import { userRepository } from "../repositories/user.repository";
+import { ruleService } from "./rule.service";
 import { githubClient } from "../integrations/github/github.client";
 import { slackClient } from "../integrations/slack/slack.client";
 import { geminiClient, AITriageResult } from "../integrations/ai/gemini.client";
@@ -63,10 +64,68 @@ export class ActionService {
       }
     }
 
-    // --- Step 0: Automated AI Triage (Google Gemini 1.5 Flash) ---
+    // --- Step 0: Resolve Configurable Automation Rules ---
+    let isAiEnabled = true;
+    let isCommentEnabled = true;
+    let isLifecycleLabelEnabled = true;
+    let isSlackEnabled = true;
+    let matchedCustomRules: Rule[] = [];
+
+    if (eventLog.repositoryId) {
+      try {
+        const repoRules = await ruleService.getRulesForRepository(eventLog.repositoryId);
+        const activeRules = repoRules.filter((r) => r.isActive);
+
+        // Feature toggles derived from active system rules
+        isAiEnabled = activeRules.some((r) => r.actionAiTriage);
+        isCommentEnabled = activeRules.some(
+          (r) =>
+            (r.isDefault && (r.actionComment === "welcome" || r.name.toLowerCase().includes("comment"))) ||
+            Boolean(r.actionComment)
+        );
+        isLifecycleLabelEnabled = activeRules.some(
+          (r) =>
+            r.isDefault && (r.actionLabel === "lifecycle" || r.name.toLowerCase().includes("label"))
+        );
+        isSlackEnabled = activeRules.some((r) => (r.isDefault && r.actionSlack) || r.actionSlack);
+
+        // Evaluate custom keyword / author rules
+        matchedCustomRules = activeRules.filter((r) => {
+          if (r.isDefault) return false;
+          if (r.eventType !== "all" && r.eventType !== eventType) return false;
+
+          const matchVal = (r.matchValue || "").toLowerCase();
+          if (r.matchField === "always") return true;
+          if (!matchVal) return false;
+
+          if (r.matchField === "title_contains") {
+            return title.toLowerCase().includes(matchVal);
+          }
+          if (r.matchField === "body_contains") {
+            return bodySnippet.toLowerCase().includes(matchVal);
+          }
+          if (r.matchField === "author_is") {
+            return sender.toLowerCase() === matchVal;
+          }
+          return false;
+        });
+
+        if (matchedCustomRules.length > 0) {
+          console.log(
+            `[ActionService] 🎯 Matched ${matchedCustomRules.length} custom rule(s): ${matchedCustomRules
+              .map((r) => r.name)
+              .join(", ")}`
+          );
+        }
+      } catch (err) {
+        console.warn("[ActionService] Error loading rules, proceeding with standard defaults:", err);
+      }
+    }
+
+    // --- Step 1: Automated AI Triage (Google Gemini) ---
     let aiTriage: AITriageResult | undefined = undefined;
 
-    if (isOpened) {
+    if (isOpened && isAiEnabled) {
       try {
         const aiResult = await geminiClient.triageContent({
           title,
@@ -98,7 +157,7 @@ export class ActionService {
     }
 
     // --- Action 1: GitHub Comment ---
-    if (issueNumber && accessToken) {
+    if (issueNumber && accessToken && isCommentEnabled) {
       let commentBody = "";
 
       if (isOpened) {
@@ -117,6 +176,13 @@ export class ActionService {
               : "🟢";
 
           commentBody += `\n\n---\n### 🤖 Automated AI Triage\n- **Summary:** _${aiTriage.summary}_\n- **Assessed Priority:** ${priorityIcon} \`${aiTriage.priority}\`\n- **Suggested Category:** \`${aiTriage.category}\``;
+        }
+
+        // Append custom rule comments if configured
+        for (const rule of matchedCustomRules) {
+          if (rule.actionComment && rule.actionComment !== "welcome") {
+            commentBody += `\n\n---\n**Rule [${rule.name}]:** ${rule.actionComment}`;
+          }
         }
       } else if (isClosed) {
         if (isPR) {
@@ -179,31 +245,45 @@ export class ActionService {
       let labelsToRemove: string[] = [];
 
       if (isOpened) {
-        labelsToAdd = isPR ? ["automated-pr", "needs-review"] : ["triage"];
+        if (isLifecycleLabelEnabled) {
+          labelsToAdd.push(isPR ? "needs-review" : "triage");
+        }
         if (aiTriage && aiTriage.suggestedLabels.length > 0) {
           for (const suggested of aiTriage.suggestedLabels) {
-            if (!labelsToAdd.includes(suggested)) {
-              labelsToAdd.push(suggested);
-            }
+            labelsToAdd.push(suggested);
+          }
+        }
+        // Custom Rule Labels (Dynamic matching)
+        for (const rule of matchedCustomRules) {
+          if (rule.actionLabel && rule.actionLabel !== "lifecycle") {
+            labelsToAdd.push(rule.actionLabel);
           }
         }
       } else if (isClosed) {
-        if (isPR) {
-          labelsToRemove = ["needs-review"];
-          labelsToAdd = isMerged ? ["merged"] : ["closed"];
-        } else {
-          labelsToRemove = ["triage"];
-          labelsToAdd = ["resolved"];
+        if (isLifecycleLabelEnabled) {
+          if (isPR) {
+            labelsToRemove = ["needs-review"];
+            labelsToAdd = isMerged ? ["merged"] : ["closed"];
+          } else {
+            labelsToRemove = ["triage"];
+            labelsToAdd = ["resolved"];
+          }
         }
       } else if (isReopened) {
-        if (isPR) {
-          labelsToRemove = ["merged", "closed"];
-          labelsToAdd = ["needs-review"];
-        } else {
-          labelsToRemove = ["resolved"];
-          labelsToAdd = ["triage"];
+        if (isLifecycleLabelEnabled) {
+          if (isPR) {
+            labelsToRemove = ["merged", "closed"];
+            labelsToAdd = ["needs-review"];
+          } else {
+            labelsToRemove = ["resolved"];
+            labelsToAdd = ["triage"];
+          }
         }
       }
+
+      // Deduplicate labels
+      labelsToAdd = Array.from(new Set(labelsToAdd));
+      labelsToRemove = Array.from(new Set(labelsToRemove));
 
       try {
         // 1. Remove outdated lifecycle labels
@@ -217,25 +297,29 @@ export class ActionService {
           });
         }
 
-        // 2. Add current state labels
-        const labelResult = await githubClient.addLabels({
-          accessToken,
-          owner,
-          repo,
-          issueNumber,
-          labels: labelsToAdd,
-        });
+        // 2. Add current state labels (only if any exist)
+        let labelsAddedResult: string[] = [];
+        if (labelsToAdd.length > 0) {
+          const labelResult = await githubClient.addLabels({
+            accessToken,
+            owner,
+            repo,
+            issueNumber,
+            labels: labelsToAdd,
+          });
+          labelsAddedResult = labelResult.labelsAdded || [];
+        }
 
         await actionLogRepository.createActionLog({
           eventLogId: eventLog.id,
           actionType: "github_label",
-          status: labelResult.success ? "SUCCESS" : "FAILED",
+          status: "SUCCESS",
           details: {
             issueNumber,
             labelsRemoved: labelsToRemove,
-            labelsAdded: labelResult.labelsAdded,
+            labelsAdded: labelsAddedResult,
           },
-          errorMessage: labelResult.error || null,
+          errorMessage: null,
         });
       } catch (err: any) {
         await actionLogRepository.createActionLog({
@@ -259,39 +343,43 @@ export class ActionService {
     }
 
     // --- Action 3: Slack Alert ---
-    try {
-      const slackResult = await slackClient.sendNotification({
-        title,
-        repoFullName,
-        eventType: eventType as "issues" | "pull_request",
-        action: action || "opened",
-        sender,
-        htmlUrl,
-        bodySnippet,
-        isMerged,
-        issueNumber,
-        aiTriage,
-      });
+    const shouldSendSlack = isSlackEnabled || matchedCustomRules.some((r) => r.actionSlack);
 
-      await actionLogRepository.createActionLog({
-        eventLogId: eventLog.id,
-        actionType: "slack_alert",
-        status: slackResult.success ? "SUCCESS" : "FAILED",
-        details: {
+    if (shouldSendSlack) {
+      try {
+        const slackResult = await slackClient.sendNotification({
           title,
           repoFullName,
+          eventType: eventType as "issues" | "pull_request",
+          action: action || "opened",
+          sender,
           htmlUrl,
-        },
-        errorMessage: slackResult.error || null,
-      });
-    } catch (err: any) {
-      await actionLogRepository.createActionLog({
-        eventLogId: eventLog.id,
-        actionType: "slack_alert",
-        status: "FAILED",
-        details: { title, repoFullName },
-        errorMessage: err?.message || String(err),
-      });
+          bodySnippet,
+          isMerged,
+          issueNumber,
+          aiTriage,
+        });
+
+        await actionLogRepository.createActionLog({
+          eventLogId: eventLog.id,
+          actionType: "slack_alert",
+          status: slackResult.success ? "SUCCESS" : "FAILED",
+          details: {
+            title,
+            repoFullName,
+            htmlUrl,
+          },
+          errorMessage: slackResult.error || null,
+        });
+      } catch (err: any) {
+        await actionLogRepository.createActionLog({
+          eventLogId: eventLog.id,
+          actionType: "slack_alert",
+          status: "FAILED",
+          details: { title, repoFullName },
+          errorMessage: err?.message || String(err),
+        });
+      }
     }
   }
 }

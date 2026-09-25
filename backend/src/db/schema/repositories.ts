@@ -2,6 +2,7 @@ import { pgTable, uuid, varchar, boolean, timestamp, index } from "drizzle-orm/p
 import { relations } from "drizzle-orm";
 import { users } from "./users";
 import { eventLogs } from "./event_logs";
+import { rules } from "./rules";
 
 // ---------------------------------------------------------------------------
 // Repositories Table (Connected Repositories)
@@ -34,6 +35,7 @@ export const repositoriesRelations = relations(repositories, ({ one, many }) => 
     references: [users.id],
   }),
   eventLogs: many(eventLogs),
+  rules: many(rules),
 }));
 
 // Inferred TypeScript types
