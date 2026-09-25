@@ -38,7 +38,13 @@ export async function fetchAvailableRepositories(): Promise<GitHubRepository[]> 
   });
 
   if (!response.ok) {
-    throw new Error("Failed to load GitHub repositories.");
+    if (response.status === 401) {
+      localStorage.removeItem("token");
+      window.location.href = "/login";
+      return [];
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData?.error?.message || errorData?.message || "Failed to load GitHub repositories.");
   }
 
   const result = await response.json();
@@ -59,7 +65,13 @@ export async function fetchConnectedRepositories(): Promise<ConnectedRepository[
   });
 
   if (!response.ok) {
-    throw new Error("Failed to load connected repositories.");
+    if (response.status === 401) {
+      localStorage.removeItem("token");
+      window.location.href = "/login";
+      return [];
+    }
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData?.error?.message || errorData?.message || "Failed to load connected repositories.");
   }
 
   const result = await response.json();

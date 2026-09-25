@@ -50,4 +50,17 @@ app.use("/api", repositoryRouter);
 // Webhook ingestion and audit event routes
 app.use("/api", webhookRouter);
 
+// Global centralized error handling middleware
+app.use((err: any, _req: Request, res: Response, _next: express.NextFunction) => {
+  const statusCode = err.status || err.statusCode || 500;
+  console.error(`[ErrorHandler] ${err.name || "Error"}: ${err.message}`);
+  res.status(statusCode).json({
+    success: false,
+    error: {
+      message: err.message || "An unexpected error occurred.",
+      code: err.code || "INTERNAL_SERVER_ERROR",
+    },
+  });
+});
+
 export default app;

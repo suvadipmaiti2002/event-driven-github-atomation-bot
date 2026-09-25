@@ -20,6 +20,7 @@ const envSchema = z.object({
     .default("https://example.com/api/webhooks/github"), // Smee URL locally or Render URL in prod
   SLACK_WEBHOOK_URL: z.string().url().optional(),
   GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().optional(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

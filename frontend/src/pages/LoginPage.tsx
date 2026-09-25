@@ -1,7 +1,7 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { Github, ArrowRight, ShieldCheck, Loader2 } from "lucide-react";
+import { Github, ArrowRight, Loader2 } from "lucide-react";
 
 export function LoginPage() {
   const { user, isLoading, login } = useAuth();
@@ -40,11 +40,6 @@ export function LoginPage() {
           Sign in with GitHub
           <ArrowRight className="w-4 h-4 ml-1 opacity-70" />
         </button>
-
-        {/* <div className="mt-6 pt-5 border-t border-slate-800/80 flex items-center justify-center gap-2 text-xs text-slate-500">
-          <ShieldCheck className="w-4 h-4 text-emerald-500" />
-          <span>OAuth 2.0 & HMAC Signature Protected</span>
-        </div> */}
       </div>
     </div>
   );

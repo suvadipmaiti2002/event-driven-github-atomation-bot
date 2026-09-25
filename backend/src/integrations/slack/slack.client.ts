@@ -1,4 +1,5 @@
 import { env } from "../../config/env";
+import { AITriageResult } from "../ai/gemini.client";
 
 export interface SlackNotificationPayload {
   title: string;
@@ -10,6 +11,7 @@ export interface SlackNotificationPayload {
   bodySnippet?: string;
   isMerged?: boolean;
   issueNumber?: number;
+  aiTriage?: AITriageResult;
 }
 
 export class SlackClient {
@@ -20,6 +22,7 @@ export class SlackClient {
    * 🔀 Pull Request / 📋 Issue: <Link>
    * 📊 Status: Open / Closed / Merged
    * 👤 Opened by / Closed by: @author
+   * 🤖 AI Summary: (if available)
    * 📝 Description: (if provided)
    */
   async sendNotification(payload: SlackNotificationPayload): Promise<{ success: boolean; error?: string }> {
@@ -78,6 +81,29 @@ export class SlackClient {
       `📊 *Status:* \`${statusText}\``,
       `👤 *${actionByLabel}:* <https://github.com/${payload.sender}|@${payload.sender}>`,
     ];
+
+    // Optional AI Triage Section
+    if (payload.aiTriage) {
+      const p = payload.aiTriage;
+      const priorityEmoji =
+        p.priority === "CRITICAL"
+          ? "🚨"
+          : p.priority === "HIGH"
+          ? "🔴"
+          : p.priority === "MEDIUM"
+          ? "🟡"
+          : "🟢";
+
+      const labelsFormatted =
+        p.suggestedLabels.length > 0
+          ? p.suggestedLabels.map((l) => `\`${l}\``).join(" ")
+          : "_none_";
+
+      contentLines.push(
+        `🤖 *AI Summary:* _${p.summary}_`,
+        `⚡ *Priority:* ${priorityEmoji} \`${p.priority}\` • *Suggested Labels:* ${labelsFormatted}`
+      );
+    }
 
     // Optional Description Quote
     const cleanSnippet = payload.bodySnippet?.trim();

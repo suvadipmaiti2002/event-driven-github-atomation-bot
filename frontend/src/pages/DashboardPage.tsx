@@ -21,6 +21,7 @@ import {
   GitCommit,
   MessageSquare,
   Bell,
+  Sparkles,
 } from "lucide-react";
 import { ActionExecutionLog } from "../api/events";
 
@@ -174,7 +175,10 @@ export function DashboardPage() {
           let label = act.actionType;
           let icon = <Activity className="w-2.5 h-2.5" />;
 
-          if (act.actionType === "github_comment") {
+          if (act.actionType === "ai_triage") {
+            label = act.details?.priority ? `AI: ${act.details.priority}` : "AI Triage";
+            icon = <Sparkles className="w-2.5 h-2.5 text-indigo-400" />;
+          } else if (act.actionType === "github_comment") {
             label = "Comment";
             icon = <MessageSquare className="w-2.5 h-2.5" />;
           } else if (act.actionType === "github_label") {
@@ -185,6 +189,12 @@ export function DashboardPage() {
             icon = <Bell className="w-2.5 h-2.5" />;
           }
 
+          const badgeClasses = isSuccess
+            ? act.actionType === "ai_triage"
+              ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/30"
+              : "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+            : "bg-rose-500/10 text-rose-300 border-rose-500/20";
+
           return (
             <span
               key={act.id}
@@ -193,11 +203,7 @@ export function DashboardPage() {
                   ? `${label}: Executed successfully`
                   : `${label}: Failed - ${act.errorMessage || "Unknown error"}`
               }
-              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border transition cursor-default ${
-                isSuccess
-                  ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
-                  : "bg-rose-500/10 text-rose-300 border-rose-500/20"
-              }`}
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border transition cursor-default ${badgeClasses}`}
             >
               {icon}
               <span>{label}</span>
@@ -468,8 +474,46 @@ export function DashboardPage() {
                           </div>
                         )}
 
-                        {/* Automated Action Badges (Comment, Label, Slack) */}
+                        {/* Automated Action Badges (Comment, Label, Slack, AI) */}
                         {renderActionBadges(evt.actionLogs)}
+
+                        {/* AI Triage Executive Summary Banner (if generated) */}
+                        {(() => {
+                          const aiLog = evt.actionLogs?.find(
+                            (a) => a.actionType === "ai_triage" && a.status === "SUCCESS" && a.details?.summary
+                          );
+                          if (!aiLog?.details?.summary) return null;
+
+                          const p = aiLog.details;
+                          const priorityColor =
+                            p.priority === "CRITICAL" || p.priority === "HIGH"
+                              ? "text-rose-400 bg-rose-500/10 border-rose-500/20"
+                              : p.priority === "MEDIUM"
+                              ? "text-amber-400 bg-amber-500/10 border-amber-500/20"
+                              : "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+
+                          return (
+                            <div className="mt-2.5 text-xs bg-slate-900/90 border border-indigo-500/20 rounded-lg p-2.5 text-slate-300">
+                              <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                                <div className="flex items-center gap-1 font-semibold text-indigo-300 text-[11px]">
+                                  <Sparkles className="w-3 h-3 text-indigo-400" />
+                                  <span>AI Triage</span>
+                                </div>
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold border ${priorityColor}`}>
+                                  Priority: {p.priority}
+                                </span>
+                                {p.category && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                                    {p.category}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-slate-300 text-[11px] leading-relaxed">
+                                {p.summary}
+                              </p>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 

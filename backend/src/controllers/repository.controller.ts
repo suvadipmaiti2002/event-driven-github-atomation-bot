@@ -1,5 +1,6 @@
 import { Response, NextFunction } from "express";
 import { z } from "zod";
+import { env } from "../config/env";
 import { repositoryService } from "../services/repository.service";
 import { AuthenticatedRequest } from "../middleware/auth.middleware";
 
@@ -29,7 +30,24 @@ export class RepositoryController {
         success: true,
         data: repos,
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.status === 401 || error?.message?.includes("Bad credentials")) {
+        const isProduction = env.NODE_ENV === "production";
+        res.clearCookie("token", {
+          httpOnly: true,
+          secure: isProduction,
+          sameSite: isProduction ? "none" : "lax",
+        });
+
+        res.status(401).json({
+          success: false,
+          error: {
+            code: "GITHUB_TOKEN_EXPIRED",
+            message: "Your GitHub session has expired.",
+          },
+        });
+        return;
+      }
       next(error);
     }
   }

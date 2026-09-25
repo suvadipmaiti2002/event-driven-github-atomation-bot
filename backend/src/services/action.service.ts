@@ -4,16 +4,18 @@ import { repositoryRepository } from "../repositories/repository.repository";
 import { userRepository } from "../repositories/user.repository";
 import { githubClient } from "../integrations/github/github.client";
 import { slackClient } from "../integrations/slack/slack.client";
+import { geminiClient, AITriageResult } from "../integrations/ai/gemini.client";
 
 export class ActionService {
   /**
    * Evaluates an incoming event and dispatches automated outbound actions:
-   * 1. GitHub Comment (Welcome acknowledgment)
-   * 2. GitHub Label (Auto-triage)
-   * 3. Slack Notification (Team alert)
+   * 0. AI Triage (Google Gemini auto-summary, priority & label suggestions)
+   * 1. GitHub Comment (Welcome acknowledgment + AI analysis)
+   * 2. GitHub Label (Auto-triage & AI suggested tags)
+   * 3. Slack Notification (Team alert with AI summary block)
    * 
-   * Strict Rule: Only executes on 'opened' issues and pull requests.
-   * Push events and other actions are ignored to avoid spam.
+   * Strict Rule: Only executes on 'opened', 'closed', and 'reopened' issues/PRs.
+   * Push events and secondary micro-events are ignored to avoid spam.
    */
   async handleEvent(eventLog: EventLog): Promise<void> {
     const { eventType, action, repoFullName, payload } = eventLog;
@@ -61,6 +63,40 @@ export class ActionService {
       }
     }
 
+    // --- Step 0: Automated AI Triage (Google Gemini 1.5 Flash) ---
+    let aiTriage: AITriageResult | undefined = undefined;
+
+    if (isOpened) {
+      try {
+        const aiResult = await geminiClient.triageContent({
+          title,
+          bodySnippet,
+          eventType: eventType as "issues" | "pull_request",
+          repoFullName,
+        });
+
+        if (aiResult.success && aiResult.data) {
+          aiTriage = aiResult.data;
+        }
+
+        await actionLogRepository.createActionLog({
+          eventLogId: eventLog.id,
+          actionType: "ai_triage",
+          status: aiResult.success ? "SUCCESS" : "FAILED",
+          details: (aiResult.data as any) || null,
+          errorMessage: aiResult.error || null,
+        });
+      } catch (err: any) {
+        await actionLogRepository.createActionLog({
+          eventLogId: eventLog.id,
+          actionType: "ai_triage",
+          status: "FAILED",
+          details: null,
+          errorMessage: err?.message || String(err),
+        });
+      }
+    }
+
     // --- Action 1: GitHub Comment ---
     if (issueNumber && accessToken) {
       let commentBody = "";
@@ -69,6 +105,19 @@ export class ActionService {
         commentBody = isPR
           ? `👋 Hi @${sender}!\n\nThank you for opening this pull request. Our automated bot has received it and alerted the team on Slack. A maintainer will review your changes shortly.`
           : `👋 Hi @${sender}!\n\nThank you for reporting this issue. Our automated bot has logged this report and notified the team on Slack for triage.`;
+
+        if (aiTriage) {
+          const priorityIcon =
+            aiTriage.priority === "CRITICAL"
+              ? "🚨"
+              : aiTriage.priority === "HIGH"
+              ? "🔴"
+              : aiTriage.priority === "MEDIUM"
+              ? "🟡"
+              : "🟢";
+
+          commentBody += `\n\n---\n### 🤖 Automated AI Triage\n- **Summary:** _${aiTriage.summary}_\n- **Assessed Priority:** ${priorityIcon} \`${aiTriage.priority}\`\n- **Suggested Category:** \`${aiTriage.category}\``;
+        }
       } else if (isClosed) {
         if (isPR) {
           commentBody = isMerged
@@ -131,6 +180,13 @@ export class ActionService {
 
       if (isOpened) {
         labelsToAdd = isPR ? ["automated-pr", "needs-review"] : ["triage"];
+        if (aiTriage && aiTriage.suggestedLabels.length > 0) {
+          for (const suggested of aiTriage.suggestedLabels) {
+            if (!labelsToAdd.includes(suggested)) {
+              labelsToAdd.push(suggested);
+            }
+          }
+        }
       } else if (isClosed) {
         if (isPR) {
           labelsToRemove = ["needs-review"];
@@ -214,6 +270,7 @@ export class ActionService {
         bodySnippet,
         isMerged,
         issueNumber,
+        aiTriage,
       });
 
       await actionLogRepository.createActionLog({
