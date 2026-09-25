@@ -6,6 +6,9 @@ import { ruleService } from "./rule.service";
 import { githubClient } from "../integrations/github/github.client";
 import { slackClient } from "../integrations/slack/slack.client";
 import { geminiClient, AITriageResult } from "../integrations/ai/gemini.client";
+import { createChildLogger } from "../utils/logger";
+
+const log = createChildLogger("ActionService");
 
 export class ActionService {
   /**
@@ -33,14 +36,15 @@ export class ActionService {
       (isPR && (isOpened || isClosed || isReopened));
 
     if (!isSupportedEvent) {
-      console.log(
-        `[ActionService] ⏭️ Skipping automated actions for event [${eventType}] action [${action || "none"}] (Only 'opened', 'closed', & 'reopened' issues/PRs are automated).`
+      log.debug(
+        { eventType, action, eventLogId: eventLog.id },
+        `Skipping automated actions for event [${eventType}] action [${action || "none"}]`
       );
       return;
     }
 
     if (!repoFullName) {
-      console.warn(`[ActionService] Event ${eventLog.id} has no repoFullName. Skipping actions.`);
+      log.warn({ eventLogId: eventLog.id }, "Event has no repoFullName. Skipping actions.");
       return;
     }
 
@@ -94,31 +98,36 @@ export class ActionService {
           if (r.isDefault) return false;
           if (r.eventType !== "all" && r.eventType !== eventType) return false;
 
-          const matchVal = (r.matchValue || "").toLowerCase();
+          const matchVal = (r.matchValue || "").trim();
           if (r.matchField === "always") return true;
           if (!matchVal) return false;
 
-          if (r.matchField === "title_contains") {
-            return title.toLowerCase().includes(matchVal);
-          }
-          if (r.matchField === "body_contains") {
-            return bodySnippet.toLowerCase().includes(matchVal);
+          if (r.matchField === "title_contains" || r.matchField === "body_contains") {
+            const targetText = r.matchField === "title_contains" ? title : bodySnippet;
+            // Escape regex special characters in the user's keyword
+            const escapedKeyword = matchVal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            // Word boundary regex ensures whole-word matching (e.g. "auth" matches "auth" or "[auth]", but NOT "author")
+            const wordBoundaryRegex = new RegExp(`\\b${escapedKeyword}\\b`, "i");
+            return wordBoundaryRegex.test(targetText);
           }
           if (r.matchField === "author_is") {
-            return sender.toLowerCase() === matchVal;
+            return sender.toLowerCase() === matchVal.toLowerCase();
           }
           return false;
         });
 
         if (matchedCustomRules.length > 0) {
-          console.log(
-            `[ActionService] 🎯 Matched ${matchedCustomRules.length} custom rule(s): ${matchedCustomRules
-              .map((r) => r.name)
-              .join(", ")}`
+          log.info(
+            {
+              count: matchedCustomRules.length,
+              rules: matchedCustomRules.map((r) => r.name),
+              repo: repoFullName,
+            },
+            `Matched ${matchedCustomRules.length} custom rule(s)`
           );
         }
       } catch (err) {
-        console.warn("[ActionService] Error loading rules, proceeding with standard defaults:", err);
+        log.warn({ err, repo: repoFullName }, "Error loading rules, proceeding with standard defaults");
       }
     }
 

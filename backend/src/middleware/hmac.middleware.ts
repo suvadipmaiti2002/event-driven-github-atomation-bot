@@ -1,6 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import { env } from "../config/env";
+import { createChildLogger } from "../utils/logger";
+
+const log = createChildLogger("HmacMiddleware");
 
 export interface RequestWithRawBody extends Request {
   rawBody?: Buffer;
@@ -23,7 +26,7 @@ export function verifyHmacSignature(
 
   // 1. Missing signature header
   if (!signatureHeader) {
-    console.warn("⚠️ Webhook request rejected: Missing X-Hub-Signature-256 header");
+    log.warn({ path: req.path, ip: req.ip }, "Webhook rejected: Missing X-Hub-Signature-256 header");
     res.status(401).json({
       success: false,
       error: {
@@ -36,7 +39,7 @@ export function verifyHmacSignature(
 
   // 2. Missing raw body buffer
   if (!req.rawBody) {
-    console.error("❌ Webhook error: Raw request body buffer was not captured.");
+    log.error("Webhook error: Raw request body buffer was not captured");
     res.status(500).json({
       success: false,
       error: {
@@ -56,7 +59,7 @@ export function verifyHmacSignature(
 
   // 4. Compare lengths safely before timingSafeEqual to avoid RangeError exceptions
   if (signatureBuffer.length !== expectedBuffer.length) {
-    console.warn("⚠️ Webhook request rejected: Signature length mismatch");
+    log.warn("Webhook rejected: Signature length mismatch");
     res.status(401).json({
       success: false,
       error: {
@@ -71,7 +74,7 @@ export function verifyHmacSignature(
   const isValid = crypto.timingSafeEqual(signatureBuffer, expectedBuffer);
 
   if (!isValid) {
-    console.warn("⚠️ Webhook request rejected: Invalid HMAC signature");
+    log.warn("Webhook rejected: Invalid HMAC signature digest");
     res.status(401).json({
       success: false,
       error: {

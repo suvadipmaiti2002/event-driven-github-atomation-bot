@@ -1,5 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { env } from "../../config/env";
+import { createChildLogger } from "../../utils/logger";
+
+const log = createChildLogger("GeminiClient");
 
 export interface AITriageResult {
   summary: string;
@@ -72,7 +75,7 @@ Respond ONLY with a valid raw JSON object (no introductory phrases like "Here is
 
     for (const modelName of candidateModels) {
       try {
-        console.log(`[GeminiClient] 🤖 Attempting AI triage using model: ${modelName}`);
+        log.info({ modelName, repo: params.repoFullName }, `Attempting AI triage`);
         const response = await client.models.generateContent({
           model: modelName,
           contents: prompt,
@@ -121,7 +124,7 @@ Respond ONLY with a valid raw JSON object (no introductory phrases like "Here is
 
         if (response.text) {
           rawText = response.text;
-          console.log(`[GeminiClient] ✅ Successfully triaged using model: ${modelName}`);
+          log.info({ modelName, repo: params.repoFullName }, `Successfully triaged using model ${modelName}`);
           break;
         }
       } catch (err: any) {
@@ -139,7 +142,10 @@ Respond ONLY with a valid raw JSON object (no introductory phrases like "Here is
           err?.message?.includes("RESOURCE_EXHAUSTED");
 
         if (shouldFallback) {
-          console.warn(`[GeminiClient] ⚠️ Model ${modelName} failed (${err?.message || err}). Falling back to next model...`);
+          log.warn(
+            { err: err?.message || err, modelName, repo: params.repoFullName },
+            `Model ${modelName} failed. Falling back to next model candidate...`
+          );
           await new Promise((resolve) => setTimeout(resolve, 800));
           continue;
         }

@@ -2,6 +2,9 @@ import { eventLogRepository, EventLogWithActions } from "../repositories/event-l
 import { repositoryRepository } from "../repositories/repository.repository";
 import { actionService } from "./action.service";
 import { EventLog } from "../db/schema";
+import { createChildLogger } from "../utils/logger";
+
+const log = createChildLogger("WebhookService");
 
 export interface ProcessWebhookResult {
   isDuplicate: boolean;
@@ -38,8 +41,9 @@ export class WebhookService {
       ["opened", "closed", "reopened"].includes(action);
 
     if (!isPrimaryLifecycle) {
-      console.log(
-        `[WebhookService] ⏭️ Skipping noise/micro-event [${eventType}] action [${action || "none"}] (delivery: ${deliveryId}).`
+      log.debug(
+        { eventType, action, deliveryId },
+        `Skipping non-lifecycle event [${eventType}] action [${action || "none"}]`
       );
       return {
         isDuplicate: false,
@@ -51,8 +55,9 @@ export class WebhookService {
     const existingEvent = await eventLogRepository.findByDeliveryId(deliveryId);
 
     if (existingEvent) {
-      console.log(
-        `[WebhookService] 🔁 Idempotency triggered: Delivery ${deliveryId} already recorded. Skipping side effects.`
+      log.info(
+        { deliveryId },
+        `Idempotency triggered: delivery ${deliveryId} already recorded. Skipping side effects.`
       );
       return {
         isDuplicate: true,
@@ -86,17 +91,18 @@ export class WebhookService {
       payload,
     });
 
-    console.log(
-      `[WebhookService] ✅ Event recorded for [${repoFullName || "unknown repo"}]: [${eventType}] action: [${action || "none"}] delivery: [${deliveryId}]`
+    log.info(
+      { repo: repoFullName, eventType, action, deliveryId, eventLogId: eventLog.id },
+      `Event recorded for [${repoFullName || "unknown repo"}]: [${eventType}] action: [${action || "none"}]`
     );
 
     // 5. Trigger automated outbound actions (GitHub comment, label, Slack)
     try {
       await actionService.handleEvent(eventLog);
     } catch (actionErr: any) {
-      console.error(
-        `[WebhookService] ⚠️ Action execution encountered error:`,
-        actionErr?.message || actionErr
+      log.error(
+        { err: actionErr, deliveryId, repo: repoFullName },
+        "Action execution encountered an unexpected error"
       );
     }
 

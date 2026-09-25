@@ -21,6 +21,7 @@ const envSchema = z.object({
   SLACK_WEBHOOK_URL: z.string().url().optional(),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().optional(),
+  LOG_LEVEL: z.string().default("info"),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

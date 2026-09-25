@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "../hooks/useAuth";
 import { useRepositories } from "../hooks/useRepositories";
 import { useEvents } from "../hooks/useEvents";
@@ -22,6 +22,7 @@ import {
   MessageSquare,
   Bell,
   Sparkles,
+  ChevronDown,
 } from "lucide-react";
 import { ActionExecutionLog } from "../api/events";
 import { RulesManager } from "../components/RulesManager";
@@ -48,9 +49,24 @@ export function DashboardPage() {
   } = useEvents(); // Automatically polls every 3 seconds
 
   const [selectedRepoId, setSelectedRepoId] = useState<string>("");
+  const [selectedEventsRepo, setSelectedEventsRepo] = useState<string>("all");
 
   const activeRulesRepo =
     connectedRepos.find((r) => r.id === selectedRulesRepoId) || connectedRepos[0] || null;
+
+  const eventRepoOptions = connectedRepos.map((r) => r.repoFullName);
+
+  const filteredEvents = events.filter((evt) => {
+    if (selectedEventsRepo === "all") return true;
+    return evt.repositoryId === selectedEventsRepo || evt.repoFullName === selectedEventsRepo;
+  });
+
+  // If the currently filtered repo was disconnected, revert back to "all"
+  useEffect(() => {
+    if (selectedEventsRepo !== "all" && !eventRepoOptions.includes(selectedEventsRepo)) {
+      setSelectedEventsRepo("all");
+    }
+  }, [eventRepoOptions, selectedEventsRepo]);
 
   const handleSelectAndConnect = () => {
     const target = availableRepos.find((r) => r.id === selectedRepoId);
@@ -387,7 +403,7 @@ export function DashboardPage() {
 
         {/* Section 2: Live Activity Stream (Scrollable Container) */}
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-xl">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-2.5">
               <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 <Activity className="w-4 h-4" />
@@ -406,14 +422,36 @@ export function DashboardPage() {
               </div>
             </div>
 
-            <button
-              onClick={refreshEvents}
-              disabled={isLoadingEvents}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-medium transition border border-slate-700 disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingEvents ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              {/* Repository Filter Dropdown */}
+              <div className="relative">
+                <select
+                  value={selectedEventsRepo}
+                  onChange={(e) => setSelectedEventsRepo(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 text-slate-200 text-xs rounded-lg pl-3 pr-8 py-1.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer appearance-none"
+                >
+                  <option value="all">All Repositories ({events.length})</option>
+                  {eventRepoOptions.map((repoName) => {
+                    const count = events.filter((e) => e.repoFullName === repoName).length;
+                    return (
+                      <option key={repoName} value={repoName}>
+                        {repoName} ({count})
+                      </option>
+                    );
+                  })}
+                </select>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              </div>
+
+              <button
+                onClick={refreshEvents}
+                disabled={isLoadingEvents}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 text-xs font-medium transition border border-slate-700 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingEvents ? "animate-spin" : ""}`} />
+                Refresh
+              </button>
+            </div>
           </div>
 
           {isLoadingEvents && events.length === 0 ? (
@@ -429,10 +467,18 @@ export function DashboardPage() {
                 Open a test issue or pull request on your connected repository to see activity appear here in real-time.
               </p>
             </div>
+          ) : filteredEvents.length === 0 ? (
+            <div className="text-center py-10 border border-dashed border-slate-800 rounded-xl bg-slate-950/40">
+              <Activity className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+              <p className="text-sm font-medium text-slate-300">No events for this repository</p>
+              <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                No activity recorded yet for {selectedEventsRepo}. Try selecting "All Repositories" or trigger an event in that repo.
+              </p>
+            </div>
           ) : (
             /* Fixed-height scrollable container for event logs */
             <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
-              {events.map((evt) => {
+              {filteredEvents.map((evt) => {
                 const details = getEventDetails(evt);
                 return (
                   <div

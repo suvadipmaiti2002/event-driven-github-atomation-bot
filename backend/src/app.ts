@@ -8,8 +8,13 @@ import { authRouter } from "./routes/auth.routes";
 import { repositoryRouter } from "./routes/repository.routes";
 import { webhookRouter } from "./routes/webhook.routes";
 import { ruleRouter } from "./routes/rule.routes";
+import { httpLogger } from "./middleware/logger.middleware";
+import { logger } from "./utils/logger";
 
 export const app = express();
+
+// Attach structured HTTP access logging
+app.use(httpLogger);
 
 // Initialize Passport GitHub OAuth Strategy
 configurePassport();
@@ -55,9 +60,18 @@ app.use("/api", webhookRouter);
 app.use("/api", ruleRouter);
 
 // Global centralized error handling middleware
-app.use((err: any, _req: Request, res: Response, _next: express.NextFunction) => {
+app.use((err: any, req: Request, res: Response, _next: express.NextFunction) => {
   const statusCode = err.status || err.statusCode || 500;
-  console.error(`[ErrorHandler] ${err.name || "Error"}: ${err.message}`);
+  logger.error(
+    {
+      err,
+      reqId: (req as any).id,
+      method: req.method,
+      path: req.path,
+      statusCode,
+    },
+    `[ErrorHandler] ${err.name || "Error"}: ${err.message}`
+  );
   res.status(statusCode).json({
     success: false,
     error: {

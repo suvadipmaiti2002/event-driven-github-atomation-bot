@@ -1,5 +1,8 @@
 import { env } from "../../config/env";
 import { AITriageResult } from "../ai/gemini.client";
+import { createChildLogger } from "../../utils/logger";
+
+const log = createChildLogger("SlackClient");
 
 export interface SlackNotificationPayload {
   title: string;
@@ -164,14 +167,23 @@ export class SlackClient {
 
       if (!response.ok) {
         const errorText = await response.text();
+        log.error(
+          { status: response.status, errorText, repo: payload.repoFullName },
+          "Slack API returned error status"
+        );
         return {
           success: false,
           error: `Slack API error (HTTP ${response.status}): ${errorText}`,
         };
       }
 
+      log.info(
+        { repo: payload.repoFullName, action: payload.action, title: payload.title },
+        "Slack notification dispatched successfully"
+      );
       return { success: true };
     } catch (err: any) {
+      log.error({ err, repo: payload.repoFullName }, "Slack network error occurred");
       return {
         success: false,
         error: `Slack network error: ${err?.message || String(err)}`,
