@@ -8,7 +8,6 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   FRONTEND_URL: z.string().url().default("http://localhost:5173"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
-  DIRECT_URL: z.string().optional(),
   JWT_SECRET: z.string().min(16, "JWT_SECRET must be at least 16 characters"),
   GITHUB_CLIENT_ID: z.string().min(1, "GITHUB_CLIENT_ID is required"),
   GITHUB_CLIENT_SECRET: z.string().min(1, "GITHUB_CLIENT_SECRET is required"),
@@ -17,11 +16,9 @@ const envSchema = z.object({
   GITHUB_WEBHOOK_URL: z
     .string()
     .url()
-    .default("https://example.com/api/webhooks/github"), // Smee URL locally or Render URL in prod
-  SLACK_WEBHOOK_URL: z.string().url().optional(),
+    .default("https://example.com/api/webhooks/github"), 
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().optional(),
-  LOG_LEVEL: z.string().default("info"),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
