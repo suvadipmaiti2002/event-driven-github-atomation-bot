@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, boolean, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, uuid, varchar, text, boolean, timestamp, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { users } from "./users";
 import { eventLogs } from "./event_logs";
@@ -16,6 +16,7 @@ export const repositories = pgTable(
     repoName: varchar("repo_name", { length: 255 }).notNull(),
     repoFullName: varchar("repo_fullname", { length: 255 }).notNull(),
     webhookId: varchar("webhook_id", { length: 64 }), // GitHub webhook ID to enable deletion on disconnect
+    slackWebhookUrl: text("slack_webhook_url"), // Optional per-repo Slack Incoming Webhook URL
     isActive: boolean("is_active").default(true).notNull(), // Soft-delete / passive toggle
     userId: uuid("user_id")
       .notNull()

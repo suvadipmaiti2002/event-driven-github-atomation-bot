@@ -356,39 +356,64 @@ export class ActionService {
     const shouldSendSlack = isSlackEnabled || matchedCustomRules.some((r) => r.actionSlack);
 
     if (shouldSendSlack) {
-      try {
-        const slackResult = await slackClient.sendNotification({
-          title,
-          repoFullName,
-          eventType: eventType as "issues" | "pull_request",
-          action: action || "opened",
-          sender,
-          htmlUrl,
-          bodySnippet,
-          isMerged,
-          issueNumber,
-          aiTriage,
-        });
+      let repoSlackWebhookUrl: string | null = null;
+      if (eventLog.repositoryId) {
+        const dbRepo = await repositoryRepository.findById(eventLog.repositoryId);
+        repoSlackWebhookUrl = dbRepo?.slackWebhookUrl || null;
+      }
 
+      if (!repoSlackWebhookUrl) {
+        log.info({ repo: repoFullName }, "Skipping Slack alert: repository has no configured Slack Webhook URL");
         await actionLogRepository.createActionLog({
           eventLogId: eventLog.id,
           actionType: "slack_alert",
-          status: slackResult.success ? "SUCCESS" : "FAILED",
+          status: "SUCCESS",
           details: {
             title,
             repoFullName,
-            htmlUrl,
+            skipped: true,
+            reason: "Slack webhook not configured for this repository.",
           },
-          errorMessage: slackResult.error || null,
+          errorMessage: null,
         });
-      } catch (err: any) {
-        await actionLogRepository.createActionLog({
-          eventLogId: eventLog.id,
-          actionType: "slack_alert",
-          status: "FAILED",
-          details: { title, repoFullName },
-          errorMessage: err?.message || String(err),
-        });
+      } else {
+        try {
+          const slackResult = await slackClient.sendNotification(
+            {
+              title,
+              repoFullName,
+              eventType: eventType as "issues" | "pull_request",
+              action: action || "opened",
+              sender,
+              htmlUrl,
+              bodySnippet,
+              isMerged,
+              issueNumber,
+              aiTriage,
+            },
+            repoSlackWebhookUrl
+          );
+
+          await actionLogRepository.createActionLog({
+            eventLogId: eventLog.id,
+            actionType: "slack_alert",
+            status: slackResult.success ? "SUCCESS" : "FAILED",
+            details: {
+              title,
+              repoFullName,
+              htmlUrl,
+            },
+            errorMessage: slackResult.error || null,
+          });
+        } catch (err: any) {
+          await actionLogRepository.createActionLog({
+            eventLogId: eventLog.id,
+            actionType: "slack_alert",
+            status: "FAILED",
+            details: { title, repoFullName },
+            errorMessage: err?.message || String(err),
+          });
+        }
       }
     }
   }
@@ -442,23 +467,36 @@ export class ActionService {
 
     try {
       if (action.actionType === "slack_alert") {
+        let repoSlackWebhookUrl: string | null = null;
+        if (eventLog.repositoryId) {
+          const dbRepo = await repositoryRepository.findById(eventLog.repositoryId);
+          repoSlackWebhookUrl = dbRepo?.slackWebhookUrl || null;
+        }
+
+        if (!repoSlackWebhookUrl) {
+          throw new Error("Cannot retry Slack alert: no Slack webhook URL is configured for this repository.");
+        }
+
         // Fetch AI triage details if previously generated
         const siblingActions = await actionLogRepository.findByEventLogId(eventLog.id);
         const aiAction = siblingActions.find((a) => a.actionType === "ai_triage" && a.status === "SUCCESS");
         const aiTriage = aiAction?.details as AITriageResult | undefined;
 
-        const slackResult = await slackClient.sendNotification({
-          title,
-          repoFullName: repoFullName || "unknown",
-          eventType: eventType as "issues" | "pull_request",
-          action: evtAction || "opened",
-          sender,
-          htmlUrl,
-          bodySnippet,
-          isMerged,
-          issueNumber,
-          aiTriage,
-        });
+        const slackResult = await slackClient.sendNotification(
+          {
+            title,
+            repoFullName: repoFullName || "unknown",
+            eventType: eventType as "issues" | "pull_request",
+            action: evtAction || "opened",
+            sender,
+            htmlUrl,
+            bodySnippet,
+            isMerged,
+            issueNumber,
+            aiTriage,
+          },
+          repoSlackWebhookUrl
+        );
 
         retrySuccess = slackResult.success;
         retryError = slackResult.error || null;

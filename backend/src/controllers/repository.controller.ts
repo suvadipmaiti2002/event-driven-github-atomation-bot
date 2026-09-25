@@ -123,6 +123,80 @@ export class RepositoryController {
       next(error);
     }
   }
+
+  /**
+   * PATCH /api/repositories/:id/slack-webhook
+   * Update or remove Slack webhook URL for a repository
+   */
+  async updateSlackWebhook(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user!;
+      const repoId = req.params.id;
+      const { slackWebhookUrl } = req.body || {};
+
+      const cleanUrl = typeof slackWebhookUrl === "string" ? slackWebhookUrl.trim() : null;
+      if (cleanUrl && !cleanUrl.startsWith("https://hooks.slack.com/services/")) {
+        res.status(400).json({
+          success: false,
+          error: "Invalid URL. Slack Webhook must start with https://hooks.slack.com/services/",
+        });
+        return;
+      }
+
+      const repo = await repositoryService.updateSlackWebhook(
+        user,
+        repoId,
+        cleanUrl || null
+      );
+
+      res.status(200).json({
+        success: true,
+        message: cleanUrl
+          ? "Slack webhook URL updated successfully."
+          : "Slack webhook URL removed.",
+        data: repo,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/repositories/:id/slack-test
+   * Dispatches a test ping to verify the Slack webhook URL
+   */
+  async testSlackWebhook(
+    req: AuthenticatedRequest,
+    res: Response,
+    next: NextFunction
+  ): Promise<void> {
+    try {
+      const user = req.user!;
+      const repoId = req.params.id;
+      const { webhookUrl } = req.body || {};
+
+      const result = await repositoryService.testSlackWebhook(user, repoId, webhookUrl);
+
+      if (!result.success) {
+        res.status(400).json({
+          success: false,
+          error: result.error || "Failed to send test Slack ping.",
+        });
+        return;
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "Test notification sent to Slack successfully!",
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const repositoryController = new RepositoryController();

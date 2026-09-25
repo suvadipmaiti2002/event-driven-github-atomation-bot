@@ -1,4 +1,5 @@
 import { githubClient, GitHubRepositoryDTO } from "../integrations/github/github.client";
+import { slackClient } from "../integrations/slack/slack.client";
 import { repositoryRepository } from "../repositories/repository.repository";
 import { env } from "../config/env";
 import { User, Repository } from "../db/schema";
@@ -97,6 +98,47 @@ export class RepositoryService {
     }
 
     return updated;
+  }
+
+  /**
+   * Updates or removes the Slack webhook URL for a repository
+   */
+  async updateSlackWebhook(
+    user: User,
+    repoId: string,
+    slackWebhookUrl: string | null
+  ): Promise<Repository> {
+    const repo = await repositoryRepository.findById(repoId);
+    if (!repo || repo.userId !== user.id) {
+      throw new Error("Repository not found or access denied.");
+    }
+
+    const updated = await repositoryRepository.updateSlackWebhook(repoId, slackWebhookUrl);
+    if (!updated) {
+      throw new Error("Failed to update Slack webhook.");
+    }
+    return updated;
+  }
+
+  /**
+   * Sends a test ping to verify a repository's Slack webhook
+   */
+  async testSlackWebhook(
+    user: User,
+    repoId: string,
+    webhookUrl?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const repo = await repositoryRepository.findById(repoId);
+    if (!repo || repo.userId !== user.id) {
+      throw new Error("Repository not found or access denied.");
+    }
+
+    const targetUrl = webhookUrl || repo.slackWebhookUrl;
+    if (!targetUrl) {
+      return { success: false, error: "No Slack webhook URL provided or configured." };
+    }
+
+    return slackClient.sendTestPing(targetUrl, repo.repoFullName);
   }
 }
 

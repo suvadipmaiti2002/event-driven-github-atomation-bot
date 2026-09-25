@@ -106,6 +106,22 @@ export class RepositoryRepository {
 
     return updated;
   }
+
+  /**
+   * Update Slack incoming webhook URL for a repository
+   */
+  async updateSlackWebhook(id: string, slackWebhookUrl: string | null): Promise<Repository | undefined> {
+    const [updated] = await db
+      .update(repositories)
+      .set({
+        slackWebhookUrl,
+        updatedAt: new Date(),
+      })
+      .where(eq(repositories.id, id))
+      .returning();
+
+    return updated;
+  }
 }
 
 export const repositoryRepository = new RepositoryRepository();

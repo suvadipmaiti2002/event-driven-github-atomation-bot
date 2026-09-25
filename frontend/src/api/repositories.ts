@@ -18,6 +18,7 @@ export interface ConnectedRepository {
   repoName: string;
   repoFullName: string;
   webhookId: string | null;
+  slackWebhookUrl?: string | null;
   isActive: boolean;
   userId: string;
   createdAt: string;
@@ -126,3 +127,60 @@ export async function disconnectRepository(repoId: string): Promise<void> {
     throw new Error("Failed to disconnect repository.");
   }
 }
+
+/**
+ * Update or clear the Slack webhook URL for a repository
+ */
+export async function updateRepoSlackWebhook(
+  repoId: string,
+  slackWebhookUrl: string | null
+): Promise<ConnectedRepository> {
+  const token = localStorage.getItem("token");
+
+  const response = await fetch(`${API_URL}/api/repositories/${repoId}/slack-webhook`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: "include",
+    body: JSON.stringify({ slackWebhookUrl }),
+    signal: AbortSignal.timeout(10000),
+  });
+
+  const result = await response.json();
+  if (!response.ok || !result.success) {
+    throw new Error(result.error || "Failed to update Slack webhook.");
+  }
+
+  return result.data;
+}
+
+/**
+ * Send a test notification to verify a Slack webhook URL
+ */
+export async function testRepoSlackWebhook(
+  repoId: string,
+  webhookUrl?: string
+): Promise<{ success: boolean; message: string }> {
+  const token = localStorage.getItem("token");
+
+  const response = await fetch(`${API_URL}/api/repositories/${repoId}/slack-test`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    credentials: "include",
+    body: JSON.stringify({ webhookUrl }),
+    signal: AbortSignal.timeout(10000),
+  });
+
+  const result = await response.json();
+  if (!response.ok || !result.success) {
+    throw new Error(result.error || "Failed to send test Slack ping.");
+  }
+
+  return result;
+}
+

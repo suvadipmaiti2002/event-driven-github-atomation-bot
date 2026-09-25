@@ -29,13 +29,16 @@ export class SlackClient {
    * 🤖 AI Summary: (if available)
    * 📝 Description: (if provided)
    */
-  async sendNotification(payload: SlackNotificationPayload): Promise<{ success: boolean; error?: string }> {
-    const webhookUrl = env.SLACK_WEBHOOK_URL;
+  async sendNotification(
+    payload: SlackNotificationPayload,
+    targetWebhookUrl?: string | null
+  ): Promise<{ success: boolean; error?: string }> {
+    const webhookUrl = targetWebhookUrl?.trim();
 
-    if (!webhookUrl || webhookUrl.includes("hooks.slack.com/services/T00000000")) {
+    if (!webhookUrl || !webhookUrl.startsWith("https://hooks.slack.com/services/")) {
       return {
         success: false,
-        error: "Slack webhook URL is not configured or using placeholder.",
+        error: "Slack webhook URL is not configured for this repository.",
       };
     }
 
@@ -200,6 +203,48 @@ export class SlackClient {
       return {
         success: false,
         error: `Slack network error: ${err?.message || String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Sends a simple verification ping to test a newly entered Slack webhook URL
+   */
+  async sendTestPing(
+    webhookUrl: string,
+    repoFullName: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const cleanUrl = webhookUrl.trim();
+    if (!cleanUrl.startsWith("https://hooks.slack.com/services/")) {
+      return {
+        success: false,
+        error: "Invalid Slack Webhook URL. It must begin with https://hooks.slack.com/services/",
+      };
+    }
+
+    try {
+      const response = await fetch(cleanUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: `🎉 *GitHub Automation Bot Connection Test*\n\n✅ Slack Incoming Webhook verified successfully for repository: \`${repoFullName}\`!\nYou will now receive real-time automated notifications here when issues, pull requests, or rules trigger.`,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        return {
+          success: false,
+          error: `Slack rejected webhook (${response.status}): ${errText}`,
+        };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: `Slack test connection failed: ${err?.message || String(err)}`,
       };
     }
   }

@@ -25,8 +25,12 @@ import {
   ChevronDown,
   RotateCw,
   X,
+  Send,
+  Trash2,
+  HelpCircle,
 } from "lucide-react";
 import { ActionExecutionLog, retryActionLog } from "../api/events";
+import { ConnectedRepository, updateRepoSlackWebhook, testRepoSlackWebhook } from "../api/repositories";
 import { RulesManager } from "../components/RulesManager";
 
 export function DashboardPage() {
@@ -55,6 +59,10 @@ export function DashboardPage() {
   const [retryingActionId, setRetryingActionId] = useState<string | null>(null);
   const [showOnlyFailures, setShowOnlyFailures] = useState<boolean>(false);
   const [toast, setToast] = useState<{ message: string; type: "error" | "success" } | null>(null);
+  const [slackModalRepo, setSlackModalRepo] = useState<ConnectedRepository | null>(null);
+  const [slackInputUrl, setSlackInputUrl] = useState<string>("");
+  const [isSavingSlack, setIsSavingSlack] = useState<boolean>(false);
+  const [isTestingSlack, setIsTestingSlack] = useState<boolean>(false);
 
   // Auto-dismiss toast notification after 5 seconds
   useEffect(() => {
@@ -123,6 +131,64 @@ export function DashboardPage() {
       });
     } finally {
       setRetryingActionId(null);
+    }
+  };
+
+  const handleSaveSlackWebhook = async () => {
+    if (!slackModalRepo) return;
+    const cleanUrl = slackInputUrl.trim();
+    if (cleanUrl && !cleanUrl.startsWith("https://hooks.slack.com/services/")) {
+      setToast({
+        type: "error",
+        message: "Invalid URL. Slack Webhook must begin with https://hooks.slack.com/services/",
+      });
+      return;
+    }
+
+    try {
+      setIsSavingSlack(true);
+      await updateRepoSlackWebhook(slackModalRepo.id, cleanUrl || null);
+      await refreshRepos();
+      setToast({
+        type: "success",
+        message: cleanUrl ? "Slack webhook saved successfully!" : "Slack webhook removed.",
+      });
+      setSlackModalRepo(null);
+    } catch (err: any) {
+      setToast({
+        type: "error",
+        message: err?.message || "Failed to update Slack webhook.",
+      });
+    } finally {
+      setIsSavingSlack(false);
+    }
+  };
+
+  const handleTestSlackWebhook = async () => {
+    if (!slackModalRepo) return;
+    const targetUrl = slackInputUrl.trim() || slackModalRepo.slackWebhookUrl;
+    if (!targetUrl || !targetUrl.startsWith("https://hooks.slack.com/services/")) {
+      setToast({
+        type: "error",
+        message: "Please enter a valid Slack webhook URL (starting with https://hooks.slack.com/services/) to test.",
+      });
+      return;
+    }
+
+    try {
+      setIsTestingSlack(true);
+      await testRepoSlackWebhook(slackModalRepo.id, targetUrl);
+      setToast({
+        type: "success",
+        message: "Test notification delivered to your Slack channel successfully! 🎉",
+      });
+    } catch (err: any) {
+      setToast({
+        type: "error",
+        message: err?.message || "Slack test connection failed.",
+      });
+    } finally {
+      setIsTestingSlack(false);
     }
   };
 
@@ -257,6 +323,7 @@ export function DashboardPage() {
           Actions:
         </span>
         {actionLogs.map((act) => {
+          const isSkipped = act.details?.skipped === true;
           const isSuccess = act.status === "SUCCESS";
           let label = act.actionType;
           let icon = <Activity className="w-2.5 h-2.5" />;
@@ -271,11 +338,13 @@ export function DashboardPage() {
             label = "Label";
             icon = <Tag className="w-2.5 h-2.5" />;
           } else if (act.actionType === "slack_alert") {
-            label = "Slack";
-            icon = <Bell className="w-2.5 h-2.5" />;
+            label = isSkipped ? "Slack: Not Configured" : "Slack";
+            icon = <Bell className={`w-2.5 h-2.5 ${isSkipped ? "text-slate-500" : ""}`} />;
           }
 
-          const badgeClasses = isSuccess
+          const badgeClasses = isSkipped
+            ? "bg-slate-800/80 text-slate-400 border-slate-700/80"
+            : isSuccess
             ? act.actionType === "ai_triage"
               ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/30"
               : "bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
@@ -284,20 +353,22 @@ export function DashboardPage() {
           const isRetrying = retryingActionId === act.id;
           const retryCount = act.retryCount || 0;
 
+          const tooltip = isSkipped
+            ? "Slack notification skipped: Webhook URL not configured for this repository. Click '+ Add Slack' in the repository card to enable."
+            : isSuccess
+            ? `${label}: Executed successfully${retryCount > 0 ? ` (after ${retryCount} retry)` : ""}`
+            : `${label}: Failed - ${act.errorMessage || "Unknown error"}`;
+
           return (
             <div key={act.id} className="inline-flex items-center gap-1">
               <span
-                title={
-                  isSuccess
-                    ? `${label}: Executed successfully${retryCount > 0 ? ` (after ${retryCount} retry)` : ""}`
-                    : `${label}: Failed - ${act.errorMessage || "Unknown error"}`
-                }
+                title={tooltip}
                 className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border transition cursor-default ${badgeClasses}`}
               >
                 {icon}
                 <span>{label}</span>
                 <span className="font-semibold text-[9px]">
-                  {isSuccess ? "✓" : "✗"}
+                  {isSkipped ? "—" : isSuccess ? "✓" : "✗"}
                 </span>
                 {retryCount > 0 && (
                   <span className="text-[9px] px-1 py-0.2 rounded bg-slate-800/80 text-indigo-300 font-mono">
@@ -306,8 +377,8 @@ export function DashboardPage() {
                 )}
               </span>
 
-              {/* Inline Retry Button for Failed Actions */}
-              {!isSuccess && (
+              {/* Inline Retry Button for Failed Actions (Not shown if intentionally skipped) */}
+              {!isSuccess && !isSkipped && (
                 <button
                   onClick={() => handleRetryAction(act.id)}
                   disabled={isRetrying}
@@ -460,18 +531,37 @@ export function DashboardPage() {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => handleDisconnect(repo.id)}
-                    disabled={actionLoadingId === repo.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-medium transition disabled:opacity-50"
-                  >
-                    {actionLoadingId === repo.id ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Unplug className="w-3.5 h-3.5" />
-                    )}
-                    Disconnect
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {/* Slack Webhook Button */}
+                    <button
+                      onClick={() => {
+                        setSlackModalRepo(repo);
+                        setSlackInputUrl(repo.slackWebhookUrl || "");
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition border ${
+                        repo.slackWebhookUrl
+                          ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+                          : "bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700"
+                      }`}
+                      title={repo.slackWebhookUrl ? "Slack webhook active" : "Configure Slack incoming webhook"}
+                    >
+                      <Bell className={`w-3.5 h-3.5 ${repo.slackWebhookUrl ? "text-emerald-400 fill-emerald-400/20" : "text-slate-400"}`} />
+                      <span>{repo.slackWebhookUrl ? "Slack Active" : "Add Slack"}</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleDisconnect(repo.id)}
+                      disabled={actionLoadingId === repo.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 text-xs font-medium transition disabled:opacity-50"
+                    >
+                      {actionLoadingId === repo.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Unplug className="w-3.5 h-3.5" />
+                      )}
+                      Disconnect
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -788,6 +878,116 @@ export function DashboardPage() {
       <footer className="border-t border-slate-900 py-4 px-6 text-center text-xs text-slate-600">
         Event-Driven GitHub Automation Bot
       </footer>
+
+      {/* Slack Webhook Configuration Modal */}
+      {slackModalRepo && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+                  <Bell className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Slack Notifications</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    For <span className="text-indigo-400 font-medium">{slackModalRepo.repoFullName}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSlackModalRepo(null)}
+                className="text-slate-400 hover:text-white transition p-1 rounded-lg hover:bg-slate-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Explanation / Guide */}
+            <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs text-slate-300 space-y-2">
+              <div className="flex items-center gap-1.5 font-semibold text-slate-200">
+                <HelpCircle className="w-3.5 h-3.5 text-indigo-400" />
+                How to get your Slack Webhook URL in 30 seconds:
+              </div>
+              <ol className="list-decimal list-inside space-y-1 text-slate-400 pl-1">
+                <li>Open your Slack channel (e.g. <code className="text-slate-300 font-mono">#github-alerts</code>).</li>
+                <li>Click the channel name → <span className="text-slate-200 font-medium">Agents & apps</span> (or <span className="text-slate-200 font-medium">Integrations</span>).</li>
+                <li>Search & add <span className="text-slate-200 font-medium">Incoming WebHooks</span> → select channel.</li>
+                <li>Copy the generated Webhook URL and paste it below.</li>
+              </ol>
+            </div>
+
+            {/* Input Field */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span>Slack Incoming Webhook URL</span>
+                {slackModalRepo.slackWebhookUrl && (
+                  <span className="text-[10px] text-emerald-400 flex items-center gap-1 font-normal">
+                    <CheckCircle2 className="w-3 h-3" /> Currently configured
+                  </span>
+                )}
+              </label>
+              <input
+                type="url"
+                value={slackInputUrl}
+                onChange={(e) => setSlackInputUrl(e.target.value)}
+                placeholder="https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-xs text-white placeholder-slate-600 outline-none transition font-mono"
+              />
+              <p className="text-[11px] text-slate-500">
+                Events for this repository will be delivered directly to this Slack channel.
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              {slackModalRepo.slackWebhookUrl ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSlackInputUrl("");
+                    handleSaveSlackWebhook();
+                  }}
+                  disabled={isSavingSlack || isTestingSlack}
+                  className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 transition disabled:opacity-50"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Remove Webhook
+                </button>
+              ) : (
+                <div />
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleTestSlackWebhook}
+                  disabled={isTestingSlack || isSavingSlack || !slackInputUrl.trim()}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition border border-slate-700 disabled:opacity-50"
+                >
+                  {isTestingSlack ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5" />
+                  )}
+                  Send Test Ping
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSaveSlackWebhook}
+                  disabled={isSavingSlack || isTestingSlack}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-500/20 transition disabled:opacity-50"
+                >
+                  {isSavingSlack ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  Save Webhook
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Toast Notification */}
       {toast && (

@@ -31,3 +31,18 @@ repositoryRouter.post(
   authenticate,
   repositoryController.disconnectRepo
 );
+
+// 5. Update repository Slack Webhook URL (Protected)
+repositoryRouter.patch(
+  "/repositories/:id/slack-webhook",
+  authenticate,
+  repositoryController.updateSlackWebhook
+);
+
+// 6. Test repository Slack Webhook URL (Protected)
+repositoryRouter.post(
+  "/repositories/:id/slack-test",
+  authenticate,
+  repositoryController.testSlackWebhook
+);
+
