@@ -5,7 +5,7 @@ import { authenticate } from "../middleware/auth.middleware";
 
 export const webhookRouter = Router();
 
-// 1. GitHub Webhook Ingestion Endpoint (Supports both plural /webhooks and singular /webhook)
+// 1. GitHub Webhook Ingestion Endpoint
 webhookRouter.post(
   "/webhook/github",
   verifyHmacSignature,

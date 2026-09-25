@@ -59,12 +59,14 @@ export class ActionService {
 
     // 1. Resolve repository & owner access token for GitHub operations
     let accessToken: string | null = null;
+    let botOwnerName = owner;
     if (eventLog.repositoryId) {
       const dbRepo = await repositoryRepository.findById(eventLog.repositoryId);
       if (dbRepo?.userId) {
         const user = await userRepository.findById(dbRepo.userId);
-        if (user?.accessToken) {
+        if (user) {
           accessToken = user.accessToken;
+          botOwnerName = user.username;
         }
       }
     }
@@ -168,12 +170,13 @@ export class ActionService {
 
     // --- Action 1: GitHub Comment ---
     if (issueNumber && accessToken && isCommentEnabled) {
+      const botHeader = `> 🤖 **GitHub Automation Bot** \`[automated]\`\n> *Dispatched on behalf of @${botOwnerName}*\n\n`;
       let commentBody = "";
 
       if (isOpened) {
         commentBody = isPR
-          ? `👋 Hi @${sender}!\n\nThank you for opening this pull request. Our automated bot has received it and alerted the team on Slack. A maintainer will review your changes shortly.`
-          : `👋 Hi @${sender}!\n\nThank you for reporting this issue. Our automated bot has logged this report and notified the team on Slack for triage.`;
+          ? `${botHeader}👋 Hi @${sender}!\n\nThank you for opening this pull request. Our automated bot has received it and alerted the team on Slack. A maintainer will review your changes shortly.`
+          : `${botHeader}👋 Hi @${sender}!\n\nThank you for reporting this issue. Our automated bot has logged this report and notified the team on Slack for triage.`;
 
         if (aiTriage) {
           const priorityIcon =
@@ -197,15 +200,15 @@ export class ActionService {
       } else if (isClosed) {
         if (isPR) {
           commentBody = isMerged
-            ? `🎉 Congratulations @${sender}! This pull request has been merged. Thank you for your contribution!`
-            : `This pull request has been closed without merging. Thank you @${sender} for contributing!`;
+            ? `${botHeader}🎉 Congratulations @${sender}! This pull request has been merged. Thank you for your contribution!`
+            : `${botHeader}This pull request has been closed without merging. Thank you @${sender} for contributing!`;
         } else {
-          commentBody = `✅ This issue has been closed. Thank you @${sender} for your feedback and contributions!`;
+          commentBody = `${botHeader}✅ This issue has been closed. Thank you @${sender} for your feedback and contributions!`;
         }
       } else if (isReopened) {
         commentBody = isPR
-          ? `🔄 This pull request has been reopened by @${sender}. Back in review!`
-          : `🔄 This issue has been reopened by @${sender}. Back in triage!`;
+          ? `${botHeader}🔄 This pull request has been reopened by @${sender}. Back in review!`
+          : `${botHeader}🔄 This issue has been reopened by @${sender}. Back in triage!`;
       }
 
       try {
@@ -390,6 +393,7 @@ export class ActionService {
               isMerged,
               issueNumber,
               aiTriage,
+              botOwnerName,
             },
             repoSlackWebhookUrl
           );
@@ -449,12 +453,14 @@ export class ActionService {
     const [owner, repo] = (repoFullName || "").split("/");
 
     let accessToken: string | null = null;
+    let botOwnerName = owner;
     if (eventLog.repositoryId) {
       const dbRepo = await repositoryRepository.findById(eventLog.repositoryId);
       if (dbRepo?.userId) {
         const user = await userRepository.findById(dbRepo.userId);
-        if (user?.accessToken) {
+        if (user) {
           accessToken = user.accessToken;
+          botOwnerName = user.username;
         }
       }
     }
@@ -494,6 +500,7 @@ export class ActionService {
             isMerged,
             issueNumber,
             aiTriage,
+            botOwnerName,
           },
           repoSlackWebhookUrl
         );
@@ -519,9 +526,10 @@ export class ActionService {
           throw new Error("Missing GitHub credentials or issue metadata for comment retry");
         }
 
+        const botHeader = `> 🤖 **GitHub Automation Bot** \`[automated]\`\n> *Dispatched on behalf of @${botOwnerName}*\n\n`;
         const commentBody = isPR
-          ? `👋 Hi @${sender}!\n\nThank you for opening this pull request. (Retried notification)`
-          : `👋 Hi @${sender}!\n\nThank you for reporting this issue. (Retried notification)`;
+          ? `${botHeader}👋 Hi @${sender}!\n\nThank you for opening this pull request. (Retried notification)`
+          : `${botHeader}👋 Hi @${sender}!\n\nThank you for reporting this issue. (Retried notification)`;
 
         const commentResult = await githubClient.createComment({
           accessToken,

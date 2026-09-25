@@ -16,6 +16,7 @@ export interface SlackNotificationPayload {
   isMerged?: boolean;
   issueNumber?: number;
   aiTriage?: AITriageResult;
+  botOwnerName?: string;
 }
 
 export class SlackClient {
@@ -86,7 +87,7 @@ export class SlackClient {
       `📁 *Repository:* <https://github.com/${payload.repoFullName}|${payload.repoFullName}>`,
       `${itemLabel} <${payload.htmlUrl}|${issueRef}${payload.title}>`,
       `📊 *Status:* \`${statusText}\``,
-      `👤 *${actionByLabel}:* <https://github.com/${payload.sender}|@${payload.sender}>`,
+      `👤 *${actionByLabel}:* <https://github.com/${payload.sender}|@${payload.sender}> (Bot)`,
     ];
 
     // Optional AI Triage Section
@@ -148,7 +149,7 @@ export class SlackClient {
         elements: [
           {
             type: "mrkdwn",
-            text: `🤖 *GitHub Automation Bot* • <!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|just now>`,
+            text: `🤖 *GitHub Automation Bot*${payload.botOwnerName ? ` (on behalf of @${payload.botOwnerName})` : ""} • <!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|just now>`,
           },
         ],
       },
