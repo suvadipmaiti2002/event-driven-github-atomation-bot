@@ -18,9 +18,15 @@ export function useAuth() {
 
   const logout = useCallback(async () => {
     setIsLoading(true);
-    await logoutUser();
-    setUser(null);
-    setIsLoading(false);
+    try {
+      await logoutUser();
+    } catch (err) {
+      console.error("Logout error:", err);
+    } finally {
+      setUser(null);
+      setIsLoading(false);
+      window.location.href = "/login";
+    }
   }, []);
 
   return {
