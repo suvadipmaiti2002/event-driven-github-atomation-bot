@@ -42,7 +42,16 @@ app.use(
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// Health check endpoint
+// Root and health check endpoints
+app.get("/", (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: "online",
+    name: "Event-Driven GitHub Automation Bot API",
+    health: "/api/health",
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.get("/api/health", (_req: Request, res: Response) => {
   res.status(200).json({ status: "healthy", timestamp: new Date().toISOString() });
 });
